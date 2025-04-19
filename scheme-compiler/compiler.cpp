@@ -35,11 +35,10 @@ llvm::Value *Call::codegen(CodegenContext &codegenContext) {
 }
 
 llvm::Function *Prototype::codegen(CodegenContext &codegenContext) {
-  // Make the function type:  double(double,double) etc.
-  std::vector<llvm::Type *> Doubles(
-      args_.size(), llvm::Type::getDoubleTy(codegenContext.context()));
+  std::vector<llvm::Type *> types(
+      args_.size(), llvm::Type::getInt64Ty(codegenContext.context()));
   llvm::FunctionType *FT = llvm::FunctionType::get(
-      llvm::Type::getDoubleTy(codegenContext.context()), Doubles, false);
+      llvm::Type::getInt64Ty(codegenContext.context()), types, false);
 
   llvm::Function *F = llvm::Function::Create(
       FT, llvm::Function::ExternalLinkage, name_, codegenContext.module());
@@ -59,7 +58,7 @@ static llvm::AllocaInst *CreateEntryBlockAlloca(CodegenContext &codegenContext,
                                                 const std::string &VarName) {
   llvm::IRBuilder<> TmpB(&TheFunction->getEntryBlock(),
                          TheFunction->getEntryBlock().begin());
-  return TmpB.CreateAlloca(llvm::Type::getDoubleTy(codegenContext.context()),
+  return TmpB.CreateAlloca(llvm::Type::getInt64Ty(codegenContext.context()),
                            nullptr, VarName);
 }
 
@@ -162,10 +161,11 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
   if (!CondV)
     return nullptr;
 
-  CondV = codegenContext.builder().CreateFCmpONE(
-      CondV,
-      llvm::ConstantFP::get(codegenContext.context(), llvm::APFloat(0.0)),
-      "ifcond");
+  auto *zero =
+      llvm::ConstantInt::get(llvm::Type::getInt1Ty(codegenContext.context()),
+                             0); // there is CreateCondBr
+
+  CondV = codegenContext.builder().CreateICmpNE(CondV, zero, "ifcond");
 
   llvm::Function *ThisFunction =
       codegenContext.builder().GetInsertBlock()->getParent();
@@ -203,7 +203,7 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
   ThisFunction->insert(ThisFunction->end(), MergeBB);
   codegenContext.builder().SetInsertPoint(MergeBB);
   llvm::PHINode *PN = codegenContext.builder().CreatePHI(
-      llvm::Type::getDoubleTy(codegenContext.context()), 2, "iftmp");
+      llvm::Type::getInt64Ty(codegenContext.context()), 2, "iftmp");
 
   PN->addIncoming(ThenV, ThenBB);
   PN->addIncoming(ElseV, ElseBB);
@@ -294,7 +294,7 @@ llvm::Value *ForExprAST::codegen(CodegenContext &codegenContext) {
 
   // for expr always returns 0.0.
   return llvm::Constant::getNullValue(
-      llvm::Type::getDoubleTy(codegenContext.context()));
+      llvm::Type::getDoubleTy(codegenContext.context())); // change the type!
 }
 
 llvm::Value *VarExprAST::codegen(CodegenContext &codegenContext) {

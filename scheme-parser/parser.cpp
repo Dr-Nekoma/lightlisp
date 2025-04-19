@@ -11,16 +11,16 @@ void Parser::ParenClose() {
 
 void Parser::ParenOpen() { paren_count_++; }
 
-SyntaxObject Parser::ReadProper() {
+std::shared_ptr<SyntaxObject> Parser::ReadProper() {
   if (tokenizer_.IsEnd())
     throw std::runtime_error("Unexpected end of expression");
 
   auto current_object = tokenizer_.GetToken().value();
 
   if (SymbolToken *symbol = std::get_if<SymbolToken>(&current_object)) {
-    return Symbol(symbol->name);
+    return std::make_shared<SyntaxObject>(Symbol(symbol->name));
   } else if (NumberToken *num_tok = std::get_if<NumberToken>(&current_object)) {
-    return Number(num_tok->value);
+    return std::make_shared<SyntaxObject>(Number(num_tok->value));
   } else {
     auto syntax = std::get<SyntaxToken>(current_object);
     if (syntax == SyntaxToken::Dot) {
@@ -36,13 +36,13 @@ SyntaxObject Parser::ReadProper() {
   throw std::runtime_error("Unexpected symbol");
 }
 
-SyntaxObject Parser::ReadList() {
+std::shared_ptr<SyntaxObject> Parser::ReadList() {
   tokenizer_.Next();
   if (tokenizer_.IsEnd())
     throw std::runtime_error("Input not complete");
 
-  std::shared_ptr<Cell> head;
-  std::shared_ptr<Cell> tail;
+  std::shared_ptr<SyntaxObject> head;
+  Cell *tail = nullptr;
   while (true) {
     auto current_token = tokenizer_.GetToken().value();
     if (auto syntax = std::get_if<SyntaxToken>(&current_token);
@@ -51,14 +51,14 @@ SyntaxObject Parser::ReadList() {
         ParenClose();
         if (paren_count_ != 0)
           tokenizer_.Next();
-        return *head;
+        return head;
       } else if (*syntax == SyntaxToken::Dot) {
         tokenizer_.Next();
         if (tail == nullptr)
           throw std::runtime_error("Improper list syntax");
 
         auto second = ReadProper();
-        tail->get<1>() = std::make_shared<SyntaxObject>(second);
+        tail->get<1>() = second;
         tokenizer_.Next();
         if (auto syntax = std::get_if<SyntaxToken>(&current_token);
             !(syntax && *syntax == SyntaxToken::ParenClose))
@@ -68,19 +68,21 @@ SyntaxObject Parser::ReadList() {
       }
     }
     auto current_object = ReadProper();
-    if (!std::holds_alternative<Cell>(current_object)) // EXTREMELY hacky
+    if (!std::holds_alternative<Cell>(*current_object)) // hacky
       tokenizer_.Next();
     Cell new_cell;
-    new_cell.get<0>() = std::make_shared<SyntaxObject>(current_object);
+    new_cell.get<0>() = current_object;
+    auto new_node = std::make_shared<SyntaxObject>(std::move(new_cell));
+    Cell *new_cell_ptr = &std::get<Cell>(*new_node);
     if (head == nullptr)
-      head = std::make_shared<Cell>(new_cell);
+      head = new_node;
     else
-      tail->get<1>() = std::make_shared<SyntaxObject>(new_cell);
-    tail = std::make_shared<Cell>(new_cell);
+      tail->get<1>() = new_node;
+    tail = new_cell_ptr;
   }
 }
 
-SyntaxObject Parser::Read() {
+std::shared_ptr<SyntaxObject> Parser::Read() {
   tokenizer_.Next();
   return ReadProper();
 }

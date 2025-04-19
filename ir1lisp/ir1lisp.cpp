@@ -1,7 +1,8 @@
 #include "ir1lisp.h"
 
 ObjectBuilder::ObjectBuilder() {
-  auto if_builder = [](ObjectBuilder &builder, SyntaxObject &syntax) -> ObjPtr {
+  auto if_builder = [](ObjectBuilder &builder, std::string &,
+                       SyntaxObject &syntax) -> ObjPtr {
     auto body = std::get<Cell>(syntax);
     auto condCell = body.get<0>();
     auto cond = codeWalk(builder, *condCell);
@@ -13,7 +14,8 @@ ObjectBuilder::ObjectBuilder() {
       if (auto cdrCell = std::get_if<Cell>(&cdr); cdrCell) {
         auto elseCell = cdrCell->get<0>();
         auto maybeElse = codeWalk(builder, *elseCell);
-        return std::make_shared<If>(cond, then, maybeElse);
+        return std::make_shared<If>(std::move(cond), std::move(then),
+                                    std::move(maybeElse));
       } else {
         throw std::runtime_error("Improper if body");
       }
@@ -22,14 +24,14 @@ ObjectBuilder::ObjectBuilder() {
   };
   builders_["if"] = if_builder;
 
-  auto def_builder = [](ObjectBuilder &builder,
+  auto def_builder = [](ObjectBuilder &builder, std::string &,
                         SyntaxObject &syntax) -> ObjPtr {
     auto body = std::get<Cell>(syntax);
     auto name = body.get<0>();
     if (!std::holds_alternative<Symbol>(*name)) {
       throw std::runtime_error("bad function name");
     }
-    auto cdr = *body.get<1>();
+    auto cdr = *body.get<1>(); // segfault
     if (auto cdrCell = std::get_if<Cell>(&cdr); cdrCell) {
       auto args = cdrCell->get<0>();
       auto argVec = parseArgList(*args);
@@ -39,10 +41,10 @@ ObjectBuilder::ObjectBuilder() {
         auto body = codeWalk(builder, *bodyCell);
         auto name_str = std::get<Symbol>(*name).getName();
         if (body) {
-          auto Proto = std::make_unique<Prototype>(name_str, argVec);
-          return std::make_unique<Function>(std::move(Proto), std::move(body));
+          auto Proto = std::make_shared<Prototype>(name_str, argVec);
+          return std::make_shared<Function>(std::move(Proto), std::move(body));
         } else {
-          return std::make_unique<Prototype>(name_str, argVec);
+          return std::make_shared<Prototype>(name_str, std::move(argVec));
         }
       } else {
         throw std::runtime_error("Improper def body");
@@ -52,12 +54,31 @@ ObjectBuilder::ObjectBuilder() {
   };
 
   builders_["def"] = def_builder;
+
+  auto builtin_builder = [](ObjectBuilder &builder, std::string &name,
+                            SyntaxObject &syntax) -> ObjPtr {
+    auto body = std::get<Cell>(syntax);
+    auto fst = codeWalk(builder, *body.get<0>());
+    auto cdr = *body.get<1>(); // segfault
+    if (auto cdrCell = std::get_if<Cell>(&cdr); cdrCell) {
+      auto snd = codeWalk(builder, *cdrCell->get<0>());
+      assert(cdrCell->get<1>() == nullptr);
+      return std::make_shared<BuiltInOp>(name, std::move(fst), std::move(snd));
+    } else {
+      throw std::runtime_error("Not enough arguments");
+    }
+  };
+
+  builders_["+"] = builtin_builder;
+  builders_["-"] = builtin_builder;
+  builders_["*"] = builtin_builder;
+  builders_["<"] = builtin_builder;
 }
 
 std::vector<std::string> parseArgList(SyntaxObject &cell) {
   std::vector<std::string> res;
-  for (auto current = cell;;) {
-    if (auto current_cell = std::get_if<Cell>(&current); current_cell) {
+  for (auto current = &cell;;) {
+    if (auto current_cell = std::get_if<Cell>(current); current_cell) {
       auto fst = *current_cell->get<0>();
       if (auto sym = std::get_if<Symbol>(&fst)) {
         res.emplace_back(sym->getName());
@@ -68,7 +89,7 @@ std::vector<std::string> parseArgList(SyntaxObject &cell) {
       if (!snd) {
         break;
       }
-      current = std::move(*snd);
+      current = snd.get();
     } else {
       throw std::runtime_error("Bad List");
     }
@@ -78,16 +99,16 @@ std::vector<std::string> parseArgList(SyntaxObject &cell) {
 
 std::vector<ObjPtr> lispListToVec(ObjectBuilder &builder, SyntaxObject &cell) {
   std::vector<ObjPtr> res;
-  for (auto current = cell;;) {
-    if (auto current_cell = std::get_if<Cell>(&current); current_cell) {
+  for (auto current = &cell;;) {
+    if (auto current_cell = std::get_if<Cell>(current); current_cell) {
       auto fst = current_cell->get<0>();
       auto compiled = codeWalk(builder, *fst);
-      res.push_back(compiled);
+      res.emplace_back(std::move(compiled));
       auto snd = current_cell->get<1>();
       if (!snd) {
         break;
       }
-      current = std::move(*snd);
+      current = snd.get();
     } else {
       throw std::runtime_error("Bad List");
     }
@@ -97,7 +118,7 @@ std::vector<ObjPtr> lispListToVec(ObjectBuilder &builder, SyntaxObject &cell) {
 
 ObjPtr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax) {
   if (Number *number = std::get_if<Number>(&syntax)) {
-    return std::shared_ptr<Number>(number);
+    return std::make_shared<Number>(number->getValue());
   } else if (Symbol *symbol = std::get_if<Symbol>(&syntax)) {
     return std::make_shared<Variable>(symbol->getName());
   } else {
@@ -109,15 +130,15 @@ ObjPtr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax) {
     auto fstObj = *fst;
     if (std::holds_alternative<Number>(fstObj)) {
       throw std::runtime_error("Incorrect form, cannot funcall a number");
-    } else if (Symbol *symbol = std::get_if<Symbol>(&syntax)) {
+    } else if (Symbol *symbol = std::get_if<Symbol>(&fstObj)) {
       auto name = symbol->getName();
-      auto body = cell.get<1>();
+      auto body = cell.get<1>(); // can be nullptr
       if (!std::holds_alternative<Cell>(*body)) {
         throw std::runtime_error("Imporper syntax");
       }
       if (auto search = builder.builders_.find(name);
           search != builder.builders_.end()) {
-        return search->second(builder, *body);
+        return search->second(builder, name, *body);
       } else {
         auto args = lispListToVec(builder, *body);
         return std::make_shared<Call>(name, args);
@@ -129,7 +150,7 @@ ObjPtr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax) {
   }
 }
 
-ObjPtr ir1LispTransform(SyntaxObject &syntax) {
+ObjPtr ir1LispTransform(std::shared_ptr<SyntaxObject> syntax) {
   ObjectBuilder builder;
-  return codeWalk(builder, syntax);
+  return codeWalk(builder, *syntax);
 }

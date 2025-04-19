@@ -5,6 +5,7 @@
 #include "Optimizer.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/MC/TargetRegistry.h"
+#include <filesystem>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/TargetParser/Host.h>
 
@@ -62,14 +63,20 @@ int genObjectFile(CodegenContext &codegenContext) {
   return 0;
 }
 
-std::unique_ptr<Function> parseTopLevelExpr(ObjPtr &body) {
+ObjPtr parseTopLevelExpr(ObjPtr body) {
+  if (auto *F = dynamic_cast<Function *>(body.get())) {
+    return body;
+  }
+
+  // Otherwise wrap it in an __anon_expr
   auto Proto =
-      std::make_unique<Prototype>("__anon_expr", std::vector<std::string>());
-  return std::make_unique<Function>(std::move(Proto), std::move(body));
+      std::make_shared<Prototype>("__anon_expr", std::vector<std::string>());
+  return std::make_shared<Function>(std::move(Proto), std::move(body));
 }
 
 int main() {
-  std::ifstream my_lisp("lisp.txt");
+  std::cout << std::filesystem::current_path().string() << std::endl;
+  std::fstream my_lisp("lisp.txt");
   auto tok = Tokenizer(&my_lisp);
   Parser parser(std::move(tok));
 
@@ -77,14 +84,22 @@ int main() {
   InitializeModuleAndManagers(codegenContext);
   auto syntax = parser.Read();
   auto bodyAST = ir1LispTransform(syntax);
-  auto fnAST = parseTopLevelExpr(bodyAST);
-  if (fnAST) {
-    if (auto *FnIR = fnAST->codegen(codegenContext)) {
-      fprintf(stderr, "Read top-level expression:\n");
-      FnIR->print(llvm::errs());
-      fprintf(stderr, "\n");
+  auto ast = parseTopLevelExpr(bodyAST);
+  if (ast) {
+    if (auto fnast = dynamic_cast<Function *>(ast.get())) {
+      if (auto *FnIR = fnast->codegen(codegenContext)) {
+        fprintf(stderr, "Read top-level expression:\n");
+        FnIR->print(llvm::errs());
+        fprintf(stderr, "\n");
+        FnIR->eraseFromParent();
 
-      FnIR->eraseFromParent();
+        std::error_code EC;
+        llvm::raw_fd_ostream llOut("lisp.ll", EC, llvm::sys::fs::OF_Text);
+        if (!EC)
+          codegenContext.module().print(llOut, nullptr);
+      }
+    } else {
+      throw std::runtime_error("toplevel expr not supported");
     }
   }
 

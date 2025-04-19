@@ -96,6 +96,8 @@ public:
 
   llvm::Value *codegen(CodegenContext &CodegenContext) override;
 
+  [[nodiscard]] int64_t getValue() const { return value_; }
+
 private:
   int64_t value_;
 };
@@ -175,13 +177,13 @@ private:
 /// FunctionAST - This class represents a function definition itself.
 class Function : public Object {
 public:
-  Function(std::unique_ptr<Prototype> proto, ObjPtr body)
+  Function(std::shared_ptr<Prototype> proto, ObjPtr body)
       : proto_(std::move(proto)), body_(std::move(body)) {}
 
   llvm::Function *codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::unique_ptr<Prototype> proto_;
+  std::shared_ptr<Prototype> proto_; // TODO change this to just proto
   ObjPtr body_;
 };
 
