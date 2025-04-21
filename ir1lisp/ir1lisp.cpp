@@ -3,70 +3,53 @@
 ObjectBuilder::ObjectBuilder() {
   auto if_builder = [](ObjectBuilder &builder, std::string &,
                        SyntaxObject &syntax) -> ObjPtr {
-    auto body = std::get<Cell>(syntax);
-    auto condCell = body.get<0>();
-    auto cond = codeWalk(builder, *condCell);
-    auto cdr = *body.get<1>();
-    if (auto cdrCell = std::get_if<Cell>(&cdr); cdrCell) {
-      auto thenCell = cdrCell->get<0>();
-      auto then = codeWalk(builder, *thenCell);
-      auto cdr = *cdrCell->get<1>();
-      if (auto cdrCell = std::get_if<Cell>(&cdr); cdrCell) {
-        auto elseCell = cdrCell->get<0>();
-        auto maybeElse = codeWalk(builder, *elseCell);
-        return std::make_shared<If>(std::move(cond), std::move(then),
-                                    std::move(maybeElse));
-      } else {
-        throw std::runtime_error("Improper if body");
-      }
-    }
-    throw std::runtime_error("Improper if body");
+    auto view = Cell::ListView{std::make_shared<SyntaxObject>(syntax)};
+    auto it = view.begin();
+    auto cond = codeWalk(builder, *it);
+    it++;
+    auto thenClause = codeWalk(builder, *it);
+    it++;
+    auto elseClause = codeWalk(builder, *it);
+    it++;
+    assert(it == view.end());
+    return std::make_shared<If>(std::move(cond), std::move(thenClause),
+                                std::move(elseClause));
   };
   builders_["if"] = if_builder;
 
   auto def_builder = [](ObjectBuilder &builder, std::string &,
                         SyntaxObject &syntax) -> ObjPtr {
-    auto body = std::get<Cell>(syntax);
-    auto name = body.get<0>();
-    if (!std::holds_alternative<Symbol>(*name)) {
+    auto view = Cell::ListView{std::make_shared<SyntaxObject>(syntax)};
+    auto it = view.begin();
+    std::string name;
+    if (auto sym = std::get_if<Symbol>(&*it)) {
+      name = sym->getName();
+    } else {
       throw std::runtime_error("bad function name");
     }
-    auto cdr = *body.get<1>(); // segfault
-    if (auto cdrCell = std::get_if<Cell>(&cdr); cdrCell) {
-      auto args = cdrCell->get<0>();
-      auto argVec = parseArgList(*args);
-      auto cdr = *cdrCell->get<1>();
-      if (auto cdrCell = std::get_if<Cell>(&cdr); cdrCell) {
-        auto bodyCell = cdrCell->get<0>();
-        auto body = codeWalk(builder, *bodyCell);
-        auto name_str = std::get<Symbol>(*name).getName();
-        if (body) {
-          auto Proto = std::make_shared<Prototype>(name_str, argVec);
-          return std::make_shared<Function>(std::move(Proto), std::move(body));
-        } else {
-          return std::make_shared<Prototype>(name_str, std::move(argVec));
-        }
-      } else {
-        throw std::runtime_error("Improper def body");
-      }
+    it++;
+    auto argVec = parseArgList(*it);
+    it++;
+    auto body = codeWalk(builder, *it);
+    if (body) {
+      auto Proto = std::make_shared<Prototype>(name, argVec);
+      return std::make_shared<Function>(std::move(Proto), std::move(body));
+    } else {
+      return std::make_shared<Prototype>(name, std::move(argVec));
     }
-    throw std::runtime_error("Improper def body");
   };
 
   builders_["def"] = def_builder;
 
   auto builtin_builder = [](ObjectBuilder &builder, std::string &name,
                             SyntaxObject &syntax) -> ObjPtr {
-    auto body = std::get<Cell>(syntax);
-    auto fst = codeWalk(builder, *body.get<0>());
-    auto cdr = *body.get<1>(); // segfault
-    if (auto cdrCell = std::get_if<Cell>(&cdr); cdrCell) {
-      auto snd = codeWalk(builder, *cdrCell->get<0>());
-      assert(cdrCell->get<1>() == nullptr);
-      return std::make_shared<BuiltInOp>(name, std::move(fst), std::move(snd));
-    } else {
-      throw std::runtime_error("Not enough arguments");
-    }
+    auto view = Cell::ListView{std::make_shared<SyntaxObject>(syntax)};
+    auto it = view.begin();
+    auto fst = codeWalk(builder, *it);
+    it++;
+    auto snd = codeWalk(builder, *it);
+    // assert(cdrCell->get<1>() == nullptr);
+    return std::make_shared<BuiltInOp>(name, std::move(fst), std::move(snd));
   };
 
   builders_["+"] = builtin_builder;
@@ -77,21 +60,12 @@ ObjectBuilder::ObjectBuilder() {
 
 std::vector<std::string> parseArgList(SyntaxObject &cell) {
   std::vector<std::string> res;
-  for (auto current = &cell;;) {
-    if (auto current_cell = std::get_if<Cell>(current); current_cell) {
-      auto fst = *current_cell->get<0>();
-      if (auto sym = std::get_if<Symbol>(&fst)) {
-        res.emplace_back(sym->getName());
-      } else {
-        throw std::runtime_error("Not a valid arg name");
-      }
-      auto snd = current_cell->get<1>();
-      if (!snd) {
-        break;
-      }
-      current = snd.get();
+  auto view = Cell::ListView{std::make_shared<SyntaxObject>(cell)};
+  for (auto node : view) {
+    if (auto sym = std::get_if<Symbol>(&node)) {
+      res.emplace_back(sym->getName());
     } else {
-      throw std::runtime_error("Bad List");
+      throw std::runtime_error("Not a valid arg name");
     }
   }
   return res;
@@ -99,19 +73,9 @@ std::vector<std::string> parseArgList(SyntaxObject &cell) {
 
 std::vector<ObjPtr> lispListToVec(ObjectBuilder &builder, SyntaxObject &cell) {
   std::vector<ObjPtr> res;
-  for (auto current = &cell;;) {
-    if (auto current_cell = std::get_if<Cell>(current); current_cell) {
-      auto fst = current_cell->get<0>();
-      auto compiled = codeWalk(builder, *fst);
-      res.emplace_back(std::move(compiled));
-      auto snd = current_cell->get<1>();
-      if (!snd) {
-        break;
-      }
-      current = snd.get();
-    } else {
-      throw std::runtime_error("Bad List");
-    }
+  auto view = Cell::ListView{std::make_shared<SyntaxObject>(cell)};
+  for (auto node : view) {
+    res.emplace_back(codeWalk(builder, node));
   }
   return res;
 }

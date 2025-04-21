@@ -5,7 +5,6 @@
 #include "Optimizer.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/MC/TargetRegistry.h"
-#include <filesystem>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/TargetParser/Host.h>
 
@@ -75,7 +74,6 @@ ObjPtr parseTopLevelExpr(ObjPtr body) {
 }
 
 int main() {
-  std::cout << std::filesystem::current_path().string() << std::endl;
   std::fstream my_lisp("lisp.txt");
   auto tok = Tokenizer(&my_lisp);
   Parser parser(std::move(tok));
@@ -91,12 +89,12 @@ int main() {
         fprintf(stderr, "Read top-level expression:\n");
         FnIR->print(llvm::errs());
         fprintf(stderr, "\n");
-        FnIR->eraseFromParent();
 
         std::error_code EC;
         llvm::raw_fd_ostream llOut("lisp.ll", EC, llvm::sys::fs::OF_Text);
         if (!EC)
           codegenContext.module().print(llOut, nullptr);
+        FnIR->eraseFromParent();
       }
     } else {
       throw std::runtime_error("toplevel expr not supported");

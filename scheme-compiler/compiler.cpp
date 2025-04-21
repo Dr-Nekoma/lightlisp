@@ -210,17 +210,18 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
   return PN;
 }
 /*
-llvm::Value *ForExprAST::codegen(CodegenContext &codegenContext) {
+llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
   // Make the new basic block for the loop header, inserting after current
   // block.
   llvm::Function *TheFunction =
       codegenContext.builder().GetInsertBlock()->getParent();
-  // Create an alloca for the variable in the entry block.
-  llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, VarName);
 
-  llvm::BasicBlock *LoopBB =
-      llvm::BasicBlock::Create(codegenContext.context(), "loop", TheFunction);
+  llvm::BasicBlock *tagbodyBlock = llvm::BasicBlock::Create(
+      codegenContext.context(), "tagbody", TheFunction);
 
+  for (auto &[forms, tag] : body_) {
+  }
+  /*
   // Emit the start code first, without 'variable' in scope.
   llvm::Value *StartVal = Start->codegen(CodegenContext & CodegenContext);
   if (!StartVal)
@@ -295,8 +296,9 @@ llvm::Value *ForExprAST::codegen(CodegenContext &codegenContext) {
   // for expr always returns 0.0.
   return llvm::Constant::getNullValue(
       llvm::Type::getDoubleTy(codegenContext.context())); // change the type!
-}
 
+}
+/*
 llvm::Value *VarExprAST::codegen(CodegenContext &codegenContext) {
   std::vector<llvm::AllocaInst *> OldBindings;
 

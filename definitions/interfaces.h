@@ -126,6 +126,52 @@ public:
     return tail_;
   }
 
+  struct ListIterator {
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = SyntaxObject;
+    using reference = SyntaxObject &;
+    using pointer = SyntaxObject *;
+    using difference_type = std::ptrdiff_t;
+
+    explicit ListIterator(std::shared_ptr<SyntaxObject> node)
+        : node_(std::move(node)) {}
+
+    reference operator*() const {
+      auto ret = std::get<Cell>(*node_);
+      return *ret.head_;
+    }
+    pointer operator->() const { return std::addressof(*node_); }
+
+    bool operator==(ListIterator const &o) const { return node_ == o.node_; }
+    bool operator!=(ListIterator const &o) const { return !(*this == o); }
+
+    ListIterator &operator++() {
+      if (!node_)
+        throw std::runtime_error("increment past end");
+      auto *c = std::get_if<Cell>(node_.get());
+      if (!c)
+        throw std::runtime_error("not a proper list");
+      node_ = c->get<1>();
+      if (node_ && !std::holds_alternative<Cell>(*node_))
+        throw std::runtime_error("not a proper list");
+      return *this;
+    }
+    ListIterator operator++(int) {
+      auto tmp = *this;
+      ++*this;
+      return tmp;
+    }
+
+  private:
+    std::shared_ptr<SyntaxObject> node_;
+  };
+
+  struct ListView {
+    std::shared_ptr<SyntaxObject> head;
+    [[nodiscard]] ListIterator begin() const { return ListIterator(head); }
+    [[nodiscard]] ListIterator end() const { return ListIterator(nullptr); }
+  };
+
 private:
   std::shared_ptr<SyntaxObject> head_;
   std::shared_ptr<SyntaxObject> tail_;
@@ -213,23 +259,17 @@ private:
   ObjPtr Cond, Then, Else;
 };
 
-/*
 class Goto : public Object {
-
 public:
-  Goto(const std::string &VarName, std::unique_ptr<Object> Start,
-       std::unique_ptr<Object> End, std::unique_ptr<Object> Step,
-       std::unique_ptr<Object> Body)
-      : VarName(VarName), Start(std::move(Start)), End(std::move(End)),
-        Step(std::move(Step)), Body(std::move(Body)) {}
+  Goto(std::vector<std::pair<std::vector<ObjPtr>, std::string>> &&body)
+      : body_(body) {}
 
   llvm::Value *codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::string name_;
-  ObjPtr Start, End, Step, Body;
+  std::vector<std::pair<std::vector<ObjPtr>, std::string>> body_;
 };
-*/
+
 /*
 /// VarObject - Expression class for var/in
 class VarObject : public Object {
