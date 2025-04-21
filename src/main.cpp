@@ -69,40 +69,76 @@ ObjPtr parseTopLevelExpr(ObjPtr body) {
 
   // Otherwise wrap it in an __anon_expr
   auto Proto =
-      std::make_shared<Prototype>("__anon_expr", std::vector<std::string>());
+      std::make_unique<Prototype>("__anon_expr", std::vector<std::string>());
   return std::make_shared<Function>(std::move(Proto), std::move(body));
 }
 
 int main() {
-  std::fstream my_lisp("lisp.txt");
-  auto tok = Tokenizer(&my_lisp);
+  std::ifstream my_lisp("lisp.txt");
+  if (!my_lisp) {
+    llvm::errs() << "Error: cannot open lisp.txt\n";
+    return 1;
+  }
+  Tokenizer tok(&my_lisp);
   Parser parser(std::move(tok));
 
   CodegenContext codegenContext;
   InitializeModuleAndManagers(codegenContext);
-  auto syntax = parser.Read();
-  auto bodyAST = ir1LispTransform(syntax);
-  auto ast = parseTopLevelExpr(bodyAST);
-  if (ast) {
-    if (auto fnast = dynamic_cast<Function *>(ast.get())) {
-      if (auto *FnIR = fnast->codegen(codegenContext)) {
-        fprintf(stderr, "Read top-level expression:\n");
-        FnIR->print(llvm::errs());
-        fprintf(stderr, "\n");
 
-        std::error_code EC;
-        llvm::raw_fd_ostream llOut("lisp.ll", EC, llvm::sys::fs::OF_Text);
-        if (!EC)
-          codegenContext.module().print(llOut, nullptr);
-        FnIR->eraseFromParent();
-      }
-    } else {
-      throw std::runtime_error("toplevel expr not supported");
-    }
+  std::vector<std::shared_ptr<Function>> functions;
+  while (!parser.IsEnd()) {
+    auto syntax = parser.Read();
+    if (!syntax)
+      continue;
+    auto bodyAST = ir1LispTransform(syntax);
+    auto ast = parseTopLevelExpr(bodyAST);
+
+    auto *fnAST = dynamic_cast<Function *>(ast.get());
+    if (!fnAST)
+      throw std::runtime_error(
+          "Only function definitions allowed at top level");
+
+    functions.emplace_back(fnAST);
   }
 
+  for (auto &Fptr : functions) {
+    if (!Fptr->codegen(codegenContext))
+      throw std::runtime_error("Codegen failed for a function");
+  }
+
+  auto *lispMain = codegenContext.module().getFunction("main");
+  if (!lispMain)
+    throw std::runtime_error("`main` function not found in Lisp code");
+  lispMain->setName("lisp_main");
+  {
+    auto &C = codegenContext.context();
+    auto &builder = codegenContext.builder();
+
+    auto *FT =
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(C), /*isVarArg=*/false);
+    auto *wrapper = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                           "main", &codegenContext.module());
+
+    auto *BB = llvm::BasicBlock::Create(C, "entry", wrapper);
+    builder.SetInsertPoint(BB);
+
+    auto *ret64 = builder.CreateCall(lispMain, {}, "call_lisp_main");
+    auto *ret32 =
+        builder.CreateTrunc(ret64, llvm::Type::getInt32Ty(C), "ret32");
+    builder.CreateRet(ret32);
+  }
+
+  for (auto &F : codegenContext.module()) {
+    llvm::verifyFunction(F);
+  }
+
+  std::error_code EC;
+  llvm::raw_fd_ostream llOut("lisp.ll", EC, llvm::sys::fs::OF_Text);
+  if (EC)
+    llvm::errs() << "Could not open lisp.ll for writing\n";
+  else
+    codegenContext.module().print(llOut, nullptr);
+
   int err = genObjectFile(codegenContext);
-  if (err == 1)
-    return 1;
-  return 0;
+  return err != 0 ? 1 : 0;
 }

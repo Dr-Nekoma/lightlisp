@@ -24,6 +24,8 @@ public:
 
   std::shared_ptr<SyntaxObject> ReadProper();
 
+  bool IsEnd() { return tokenizer_.IsEnd(); }
+
 private:
   void ParenClose();
   void ParenOpen();

@@ -118,23 +118,22 @@ llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
     // This assume we're building without RTTI because LLVM builds that way by
     // default. If you build LLVM with RTTI this can be changed to a
     // dynamic_cast for automatic error checking.
-    /*auto *LHSE = static_cast<Variable *>(LHS.get());
+    auto *LHSE = static_cast<Variable *>(fst_.get());
     if (!LHSE)
-      return LogErrorV("destination of '=' must be a variable");
+      throw std::runtime_error("destination of '=' must be a variable");
 
     // Codegen the RHS.
-    llvm::Value *Val = RHS->codegen();
+    llvm::Value *Val = snd_->codegen(codegenContext);
     if (!Val)
       return nullptr;
 
     // Look up the name.
-    llvm::Value *Variable = getNamedValues()[LHSE->getName()];
+    llvm::Value *Variable = codegenContext.named_values()[LHSE->getName()];
     if (!Variable)
-      return LogErrorV("Unknown variable name");
+      throw std::runtime_error("Unknown variable name");
 
-    getBuilder().CreateStore(Val, Variable);
-    return Val;*/
-    throw std::runtime_error("Unimplemented setq assignment");
+    codegenContext.builder().CreateStore(Val, Variable);
+    return Val;
   }
 
   llvm::Value *fst = fst_->codegen(codegenContext);
@@ -209,95 +208,72 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
   PN->addIncoming(ElseV, ElseBB);
   return PN;
 }
-/*
+
 llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
-  // Make the new basic block for the loop header, inserting after current
-  // block.
   llvm::Function *TheFunction =
       codegenContext.builder().GetInsertBlock()->getParent();
 
-  llvm::BasicBlock *tagbodyBlock = llvm::BasicBlock::Create(
-      codegenContext.context(), "tagbody", TheFunction);
+  codegenContext.tagEnvs().emplace_back();
 
-  for (auto &[forms, tag] : body_) {
-  }
-  /*
-  // Emit the start code first, without 'variable' in scope.
-  llvm::Value *StartVal = Start->codegen(CodegenContext & CodegenContext);
-  if (!StartVal)
-    return nullptr;
-  codegenContext.builder().CreateStore(StartVal, Alloca);
-
-  // Insert an explicit fall through from the current block to the LoopBB.
-  codegenContext.builder().CreateBr(LoopBB);
-
-  // Start insertion in LoopBB.
-  codegenContext.builder().SetInsertPoint(LoopBB);
-
-  // Within the loop, the variable is defined equal to the PHI node.  If it
-  // shadows an existing variable, we have to restore it, so save it now.
-  llvm::AllocaInst *OldVal = codegenContext.named_values()[VarName];
-  codegenContext.named_values()[VarName] = Alloca;
-
-  // Emit the body of the loop.  This, like any other expr, can change the
-  // current BB.  Note that we ignore the value computed by the body, but don't
-  // allow an error.
-  if (!Body->codegen(CodegenContext & CodegenContext))
-    return nullptr;
-
-  // Emit the step value.
-  llvm::Value *StepVal = nullptr;
-  if (Step) {
-    StepVal = Step->codegen(CodegenContext & CodegenContext);
-    if (!StepVal)
-      return nullptr;
-  } else {
-    // If not specified, use 1.0.
-    StepVal =
-        llvm::ConstantFP::get(codegenContext.context(), llvm::APFloat(1.0));
+  for (auto &item : body_) {
+    if (auto *tag =
+            std::get_if<std::string>(&item)) { // check for the repeating tags
+      codegenContext.lastTagEnv()[*tag] =
+          llvm::BasicBlock::Create(codegenContext.context(), *tag, TheFunction);
+    }
   }
 
-  // Compute the end condition.
-  llvm::Value *EndCond = End->codegen(CodegenContext & CodegenContext);
-  if (!EndCond)
-    return nullptr;
+  llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(
+      codegenContext.context(), "tagbody.exit", TheFunction);
 
-  // Reload, increment, and restore the alloca.  This handles the case where
-  // the body of the loop mutates the variable.
-  llvm::Value *CurVar = codegenContext.builder().CreateLoad(
-      Alloca->getAllocatedType(), Alloca, VarName.c_str());
-  llvm::Value *NextVar =
-      codegenContext.builder().CreateFAdd(CurVar, StepVal, "nextvar");
-  codegenContext.builder().CreateStore(NextVar, Alloca);
+  llvm::Value *retVal = nullptr;
 
-  // Convert condition to a bool by comparing non-equal to 0.0.
-  EndCond = codegenContext.builder().CreateFCmpONE(
-      EndCond,
-      llvm::ConstantFP::get(codegenContext.context(), llvm::APFloat(0.0)),
-      "loopcond");
+  llvm::BasicBlock *curBB = codegenContext.builder().GetInsertBlock();
 
-  // Create the "after loop" block and insert it.
-  llvm::BasicBlock *AfterBB = llvm::BasicBlock::Create(
-      codegenContext.context(), "afterloop", TheFunction);
+  for (auto &item : body_) {
+    if (auto *tag = std::get_if<std::string>(&item)) {
+      if (!curBB->getTerminator())
+        codegenContext.builder().CreateBr(codegenContext.lastTagEnv()[*tag]);
+      codegenContext.builder().SetInsertPoint(
+          codegenContext.lastTagEnv()[*tag]);
+    } else {
+      auto &expr = std::get<ObjPtr>(item);
+      auto v = expr->codegen(codegenContext);
+      if (v)
+        retVal = v;
+      curBB = codegenContext.builder().GetInsertBlock();
+    }
+  }
 
-  // Insert the conditional branch into the end of LoopEndBB.
-  // br i1 %loopcond, label %loop, label %afterloop
-  codegenContext.builder().CreateCondBr(EndCond, LoopBB, AfterBB);
+  if (!curBB->getTerminator())
+    codegenContext.builder().CreateBr(afterBB);
+  codegenContext.builder().SetInsertPoint(afterBB);
 
-  // Any new code will be inserted in AfterBB.
-  codegenContext.builder().SetInsertPoint(AfterBB);
+  codegenContext.tagEnvs().pop_back();
 
-  // Restore the unshadowed variable.
-  if (OldVal)
-    codegenContext.named_values()[VarName] = OldVal;
-  else
-    codegenContext.named_values().erase(VarName);
-
-  // for expr always returns 0.0.
-  return llvm::Constant::getNullValue(
-      llvm::Type::getDoubleTy(codegenContext.context())); // change the type!
-
+  return retVal;
 }
+
+llvm::Value *Go::codegen(CodegenContext &codegenContext) {
+  llvm::BasicBlock *dest = nullptr;
+  for (auto env = codegenContext.tagEnvs().rbegin();
+       env != codegenContext.tagEnvs().rend(); ++env) {
+    auto it = env->find(tag_);
+    if (it != env->end()) {
+      dest = it->second;
+      break;
+    }
+  }
+
+  if (!dest)
+    throw std::runtime_error("Undefined tag in go: " + tag_);
+
+  codegenContext.builder().CreateBr(dest);
+
+  return llvm::ConstantInt::get(
+      llvm::Type::getInt64Ty(codegenContext.context()), 0);
+}
+
 /*
 llvm::Value *VarExprAST::codegen(CodegenContext &codegenContext) {
   std::vector<llvm::AllocaInst *> OldBindings;

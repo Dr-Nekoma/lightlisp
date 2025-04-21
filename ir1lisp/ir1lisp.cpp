@@ -32,7 +32,7 @@ ObjectBuilder::ObjectBuilder() {
     it++;
     auto body = codeWalk(builder, *it);
     if (body) {
-      auto Proto = std::make_shared<Prototype>(name, argVec);
+      auto Proto = std::make_unique<Prototype>(name, argVec);
       return std::make_shared<Function>(std::move(Proto), std::move(body));
     } else {
       return std::make_shared<Prototype>(name, std::move(argVec));
@@ -56,6 +56,36 @@ ObjectBuilder::ObjectBuilder() {
   builders_["-"] = builtin_builder;
   builders_["*"] = builtin_builder;
   builders_["<"] = builtin_builder;
+  builders_["setq"] = builtin_builder;
+
+  auto tagbody_builder = [](ObjectBuilder &builder, std::string &,
+                            SyntaxObject &syntax) -> ObjPtr {
+    auto view = Cell::ListView{std::make_shared<SyntaxObject>(syntax)};
+    std::vector<std::variant<ObjPtr, std::string>> body;
+    for (auto val : view) {
+      if (auto sym = std::get_if<Symbol>(&val))
+        body.emplace_back(sym->getName());
+      else
+        body.emplace_back(codeWalk(builder, val));
+    }
+    return std::make_shared<Goto>(std::move(body));
+  };
+
+  builders_["tagbody"] = tagbody_builder;
+
+  auto go_builder = [](ObjectBuilder &builder, std::string &name,
+                       SyntaxObject &syntax) -> ObjPtr {
+    auto view = Cell::ListView{std::make_shared<SyntaxObject>(syntax)};
+    auto it = view.begin();
+    if (auto sym = std::get_if<Symbol>(&*it)) {
+      auto name = sym->getName();
+      return std::make_shared<Go>(std::move(name));
+    } else {
+      throw std::runtime_error("Non symbol cannot be a tag");
+    }
+  };
+
+  builders_["go"] = go_builder;
 }
 
 std::vector<std::string> parseArgList(SyntaxObject &cell) {

@@ -119,7 +119,7 @@ public:
       RecordLongToken(std::move(accum_token));
   }
 
-  std::optional<Token> GetToken() { return this_token_; }
+  std::optional<Token> &GetToken() { return this_token_; }
 
 private:
   void RecordLongToken(std::string &&accum_token) {

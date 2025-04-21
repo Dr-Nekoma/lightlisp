@@ -67,11 +67,22 @@ public:
     return named_values_;
   }
 
+  std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &tagEnvs() {
+    return tagEnvs_;
+  }
+
+  std::unordered_map<std::string, llvm::BasicBlock *> &lastTagEnv() {
+    if (tagEnvs_.empty())
+      throw std::runtime_error("Go outside of tagbody");
+    return tagEnvs_.back();
+  }
+
 private:
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::IRBuilder<>> builder_;
   std::unique_ptr<llvm::Module> module_;
   std::map<std::string, llvm::AllocaInst *> named_values_;
+  std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> tagEnvs_;
 };
 
 class Object {
@@ -223,13 +234,13 @@ private:
 /// FunctionAST - This class represents a function definition itself.
 class Function : public Object {
 public:
-  Function(std::shared_ptr<Prototype> proto, ObjPtr body)
+  Function(std::unique_ptr<Prototype> proto, ObjPtr body)
       : proto_(std::move(proto)), body_(std::move(body)) {}
 
   llvm::Function *codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::shared_ptr<Prototype> proto_; // TODO change this to just proto
+  std::unique_ptr<Prototype> proto_; // TODO change this to just proto
   ObjPtr body_;
 };
 
@@ -261,13 +272,22 @@ private:
 
 class Goto : public Object {
 public:
-  Goto(std::vector<std::pair<std::vector<ObjPtr>, std::string>> &&body)
-      : body_(body) {}
+  Goto(std::vector<std::variant<ObjPtr, std::string>> &&body) : body_(body) {}
 
   llvm::Value *codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::vector<std::pair<std::vector<ObjPtr>, std::string>> body_;
+  std::vector<std::variant<ObjPtr, std::string>> body_;
+};
+
+class Go : public Object {
+public:
+  Go(std::string &&tag) : tag_(tag) {}
+
+  llvm::Value *codegen(CodegenContext &CodegenContext) override;
+
+private:
+  std::string tag_;
 };
 
 /*

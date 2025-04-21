@@ -68,6 +68,8 @@ std::shared_ptr<SyntaxObject> Parser::ReadList() {
       }
     }
     auto current_object = ReadProper();
+    if (!current_object)
+      return current_object;
     if (!std::holds_alternative<Cell>(*current_object)) // hacky
       tokenizer_.Next();
     Cell new_cell;
