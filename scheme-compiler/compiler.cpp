@@ -224,7 +224,9 @@ llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
   }
 
   llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(
-      codegenContext.context(), "tagbody.exit", TheFunction);
+      codegenContext.context(),
+      "tagbody.exit" + std::to_string(codegenContext.tagEnvs().size()),
+      TheFunction);
 
   llvm::Value *retVal = nullptr;
 
