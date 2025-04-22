@@ -99,7 +99,7 @@ public:
   // virtual void Walk(const std::function<void(ObjPtr *)> &fn) { return; };
 };
 
-using ObjPtr = std::shared_ptr<Object>;
+using ObjPtr = std::unique_ptr<Object>;
 
 class Number : public Object {
 public:
@@ -127,10 +127,10 @@ class Cell {
 public:
   Cell() : head_(nullptr), tail_(nullptr) {}
 
-  Cell(std::shared_ptr<SyntaxObject> head, std::shared_ptr<SyntaxObject> tail)
-      : head_(head), tail_(tail) {}
+  Cell(std::unique_ptr<SyntaxObject> head, std::unique_ptr<SyntaxObject> tail)
+      : head_(std::move(head)), tail_(std::move(tail)) {}
 
-  template <size_t idx> std::shared_ptr<SyntaxObject> &get() {
+  template <size_t idx> std::unique_ptr<SyntaxObject> &get() {
     static_assert(idx < 2, "Wrong index");
     if constexpr (idx == 0)
       return head_;
@@ -144,14 +144,15 @@ public:
     using pointer = SyntaxObject *;
     using difference_type = std::ptrdiff_t;
 
-    explicit ListIterator(std::shared_ptr<SyntaxObject> node)
-        : node_(std::move(node)) {}
+    explicit ListIterator(SyntaxObject *node) : node_(node) {}
 
     reference operator*() const {
-      auto ret = std::get<Cell>(*node_);
+      auto &ret = std::get<Cell>(*node_);
       return *ret.head_;
     }
     pointer operator->() const { return std::addressof(*node_); }
+
+    pointer getCell() { return node_; }
 
     bool operator==(ListIterator const &o) const { return node_ == o.node_; }
     bool operator!=(ListIterator const &o) const { return !(*this == o); }
@@ -159,10 +160,10 @@ public:
     ListIterator &operator++() {
       if (!node_)
         throw std::runtime_error("increment past end");
-      auto *c = std::get_if<Cell>(node_.get());
+      auto *c = std::get_if<Cell>(node_);
       if (!c)
         throw std::runtime_error("not a proper list");
-      node_ = c->get<1>();
+      node_ = c->get<1>().get();
       if (node_ && !std::holds_alternative<Cell>(*node_))
         throw std::runtime_error("not a proper list");
       return *this;
@@ -174,18 +175,23 @@ public:
     }
 
   private:
-    std::shared_ptr<SyntaxObject> node_;
+    SyntaxObject *node_;
   };
 
   struct ListView {
-    std::shared_ptr<SyntaxObject> head;
-    [[nodiscard]] ListIterator begin() const { return ListIterator(head); }
-    [[nodiscard]] ListIterator end() const { return ListIterator(nullptr); }
+    ListView(SyntaxObject *head, SyntaxObject *tail)
+        : head_(head), tail_(tail) {}
+
+    ListView(SyntaxObject *head) : head_(head), tail_(nullptr) {}
+    SyntaxObject *head_;
+    SyntaxObject *tail_;
+    [[nodiscard]] ListIterator begin() const { return ListIterator(head_); }
+    [[nodiscard]] ListIterator end() const { return ListIterator(tail_); }
   };
 
 private:
-  std::shared_ptr<SyntaxObject> head_;
-  std::shared_ptr<SyntaxObject> tail_;
+  std::unique_ptr<SyntaxObject> head_;
+  std::unique_ptr<SyntaxObject> tail_;
 };
 
 /// VariableObject - Expression class for referencing a variable, like "a".
@@ -235,12 +241,14 @@ private:
 class Function : public Object {
 public:
   Function(std::unique_ptr<Prototype> proto, ObjPtr body)
-      : proto_(std::move(proto)), body_(std::move(body)) {}
+      : proto_(std::move(*proto.release())), body_(std::move(body)) {}
 
   llvm::Function *codegen(CodegenContext &CodegenContext) override;
 
+  Prototype &getProto() { return proto_; }
+
 private:
-  std::unique_ptr<Prototype> proto_; // TODO change this to just proto
+  Prototype proto_; // TODO change this to just proto
   ObjPtr body_;
 };
 
@@ -272,7 +280,8 @@ private:
 
 class Goto : public Object {
 public:
-  Goto(std::vector<std::variant<ObjPtr, std::string>> &&body) : body_(body) {}
+  Goto(std::vector<std::variant<ObjPtr, std::string>> &&body)
+      : body_(std::move(body)) {}
 
   llvm::Value *codegen(CodegenContext &CodegenContext) override;
 

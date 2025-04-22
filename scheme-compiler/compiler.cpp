@@ -65,10 +65,10 @@ static llvm::AllocaInst *CreateEntryBlockAlloca(CodegenContext &codegenContext,
 llvm::Function *Function::codegen(CodegenContext &codegenContext) {
   // First, check for an existing function from a previous 'extern' declaration.
   llvm::Function *TheFunction =
-      codegenContext.module().getFunction(proto_->getName());
+      codegenContext.module().getFunction(proto_.getName());
 
   if (!TheFunction)
-    TheFunction = proto_->codegen(codegenContext);
+    TheFunction = proto_.codegen(codegenContext);
 
   if (!TheFunction)
     return nullptr;

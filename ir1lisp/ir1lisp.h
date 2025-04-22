@@ -2,7 +2,7 @@
 
 struct ObjectBuilder {
   using BuildMethod = ObjPtr (*)(ObjectBuilder &, std::string &name,
-                                 SyntaxObject &);
+                                 SyntaxObject *);
 
   ObjectBuilder();
 
@@ -11,10 +11,10 @@ struct ObjectBuilder {
   std::unordered_map<std::string, BuildMethod> builders_;
 };
 
-std::vector<std::string> parseArgList(SyntaxObject &);
+std::vector<std::string> parseArgList(SyntaxObject *syntax);
 
-std::vector<ObjPtr> lispListToVec(SyntaxObject &);
+std::vector<ObjPtr> lispListToVec(ObjectBuilder &builder, SyntaxObject *syntax);
 
 ObjPtr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax);
 
-ObjPtr ir1LispTransform(std::shared_ptr<SyntaxObject> syntax);
+ObjPtr ir1LispTransform(std::unique_ptr<SyntaxObject> syntax);

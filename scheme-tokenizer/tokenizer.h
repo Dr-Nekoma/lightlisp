@@ -70,7 +70,10 @@ inline bool Matches(char cur, char first, Args... rest) {
 
 class Tokenizer {
 public:
-  Tokenizer(std::istream *in) : working_stream_(in) { Step(); }
+  Tokenizer(std::istream *in) : working_stream_(in) {
+    Step();
+    Next();
+  }
 
   bool IsEnd() { return cur_ == EOF; }
 
@@ -100,6 +103,9 @@ public:
         }
         this_token_ = StringToken(std::move(accum_token));
         return Step();
+      } else if (cur_ == '\n' && !accum_token.empty()) {
+        line++;
+        return RecordLongToken(std::move(accum_token));
       } else if (std::isspace(cur_) && !accum_token.empty()) {
         return RecordLongToken(std::move(accum_token));
       } else if (isalnum(cur_) ||
@@ -132,4 +138,5 @@ private:
   std::optional<Token> this_token_ = std::nullopt;
   std::istream *working_stream_;
   char cur_;
+  size_t line = 1;
 };

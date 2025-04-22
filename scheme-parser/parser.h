@@ -18,11 +18,11 @@ class Parser {
 public:
   explicit Parser(Tokenizer &&tok);
 
-  std::shared_ptr<SyntaxObject> ReadList();
+  std::unique_ptr<SyntaxObject> ReadList();
 
-  std::shared_ptr<SyntaxObject> Read();
+  std::unique_ptr<SyntaxObject> Read();
 
-  std::shared_ptr<SyntaxObject> ReadProper();
+  std::unique_ptr<SyntaxObject> ReadProper();
 
   bool IsEnd() { return tokenizer_.IsEnd(); }
 

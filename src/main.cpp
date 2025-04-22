@@ -40,7 +40,7 @@ int genObjectFile(CodegenContext &codegenContext) {
   codegenContext.module().setDataLayout(TargetMachine->createDataLayout());
   codegenContext.module().setTargetTriple(TargetTriple);
 
-  auto Filename = "output.o";
+  auto Filename = "lisp.o";
   std::error_code EC;
   llvm::raw_fd_ostream dest(Filename, EC, llvm::sys::fs::OF_None);
 
@@ -62,7 +62,7 @@ int genObjectFile(CodegenContext &codegenContext) {
   return 0;
 }
 
-ObjPtr parseTopLevelExpr(ObjPtr body) {
+/*ObjPtr parseTopLevelExpr(ObjPtr body) {
   if (auto *F = dynamic_cast<Function *>(body.get())) {
     return body;
   }
@@ -70,8 +70,8 @@ ObjPtr parseTopLevelExpr(ObjPtr body) {
   // Otherwise wrap it in an __anon_expr
   auto Proto =
       std::make_unique<Prototype>("__anon_expr", std::vector<std::string>());
-  return std::make_shared<Function>(std::move(Proto), std::move(body));
-}
+  return std::make_unique<Function>(std::move(Proto), std::move(body));
+}*/
 
 int main() {
   std::ifstream my_lisp("lisp.txt");
@@ -85,20 +85,20 @@ int main() {
   CodegenContext codegenContext;
   InitializeModuleAndManagers(codegenContext);
 
-  std::vector<std::shared_ptr<Function>> functions;
+  std::vector<std::unique_ptr<Function>> functions;
   while (!parser.IsEnd()) {
     auto syntax = parser.Read();
     if (!syntax)
       continue;
-    auto bodyAST = ir1LispTransform(syntax);
-    auto ast = parseTopLevelExpr(bodyAST);
+    auto ast = ir1LispTransform(std::move(syntax));
 
-    auto *fnAST = dynamic_cast<Function *>(ast.get());
+    auto fnAST = dynamic_cast<Function *>(ast.release());
     if (!fnAST)
       throw std::runtime_error(
           "Only function definitions allowed at top level");
 
-    functions.emplace_back(fnAST);
+    functions.emplace_back(std::make_unique<Function>(std::move(*fnAST)));
+    llvm::errs() << functions.back()->getProto().getName() << '\n';
   }
 
   for (auto &Fptr : functions) {
@@ -114,8 +114,7 @@ int main() {
     auto &C = codegenContext.context();
     auto &builder = codegenContext.builder();
 
-    auto *FT =
-        llvm::FunctionType::get(llvm::Type::getInt32Ty(C), /*isVarArg=*/false);
+    auto *FT = llvm::FunctionType::get(llvm::Type::getInt32Ty(C), false);
     auto *wrapper = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
                                            "main", &codegenContext.module());
 
