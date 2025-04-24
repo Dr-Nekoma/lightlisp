@@ -15,23 +15,21 @@ static llvm::AllocaInst *CreateEntryBlockAlloca(CodegenContext &codegenContext,
 
 llvm::Value *Number::codegen(CodegenContext &codegenContext) {
   llvm::StructType *ValueTy = codegenContext.getValueTy();
-  llvm::Function *TheFunction =
-      codegenContext.builder().GetInsertBlock()->getParent();
-  llvm::IRBuilder<> TmpB(&TheFunction->getEntryBlock(),
-                         TheFunction->getEntryBlock().begin());
-  llvm::AllocaInst *boxed = CreateEntryBlockAlloca(
-      codegenContext, TheFunction, ValueTy, "num" + std::to_string(value_));
+  auto &builder = codegenContext.builder();
+
+  auto *boxed = builder.CreateCall(codegenContext.getArenaAllocator(), {},
+                                   "num" + std::to_string(value_));
 
   auto *intDescGV = codegenContext.module().getNamedGlobal("type.Int");
-  auto *typeGEP = TmpB.CreateStructGEP(ValueTy, boxed, 0, "type.ptr");
-  TmpB.CreateStore(intDescGV, typeGEP);
+  auto *typeGEP = builder.CreateStructGEP(ValueTy, boxed, 0, "type.ptr");
+  builder.CreateStore(intDescGV, typeGEP);
 
   //  store the raw i64 payload into the 8-byte union
-  auto *payloadGEP = TmpB.CreateStructGEP(ValueTy, boxed, 1, "payload.ptr");
-  auto *i64Ptr = TmpB.CreateBitCast(
-      payloadGEP, llvm::PointerType::get(TmpB.getInt64Ty(), 0),
+  auto *payloadGEP = builder.CreateStructGEP(ValueTy, boxed, 1, "payload.ptr");
+  auto *i64Ptr = builder.CreateBitCast(
+      payloadGEP, llvm::PointerType::get(builder.getInt64Ty(), 0),
       "payload.i64.ptr");
-  TmpB.CreateStore(TmpB.getInt64(value_), i64Ptr);
+  builder.CreateStore(builder.getInt64(value_), i64Ptr);
 
   return boxed;
 }
@@ -153,7 +151,9 @@ llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
 
   auto &builder = codegenContext.builder();
   auto valueTy = codegenContext.getValueTy();
-  auto *fn = builder.GetInsertBlock()->getParent();
+
+  auto boxed =
+      builder.CreateCall(codegenContext.getArenaAllocator(), {}, "op.result");
 
   llvm::Value *fst = fst_->codegen(codegenContext);
   llvm::Value *snd = snd_->codegen(codegenContext);
@@ -191,9 +191,6 @@ llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
   } else {
     throw std::runtime_error("Non existent operator");
   }
-
-  llvm::AllocaInst *boxed =
-      CreateEntryBlockAlloca(codegenContext, fn, valueTy, "op.result");
 
   // 4b) store the TypeDesc* into field 0
   llvm::GlobalVariable *intDescGV =
@@ -324,6 +321,9 @@ llvm::Value *Go::codegen(CodegenContext &codegenContext) {
   auto valueTy = codegenContext.getValueTy();
   auto *fn = builder.GetInsertBlock()->getParent();
 
+  auto boxed = codegenContext.builder().CreateCall(
+      codegenContext.getArenaAllocator(), {}, "op.result");
+
   llvm::BasicBlock *dest = nullptr;
   for (auto env = codegenContext.tagEnvs().rbegin();
        env != codegenContext.tagEnvs().rend(); ++env) {
@@ -336,9 +336,6 @@ llvm::Value *Go::codegen(CodegenContext &codegenContext) {
 
   if (!dest)
     throw std::runtime_error("Undefined tag in go: " + tag_);
-
-  llvm::AllocaInst *boxed =
-      CreateEntryBlockAlloca(codegenContext, fn, valueTy, "op.result");
 
   llvm::GlobalVariable *intDescGV =
       codegenContext.module().getNamedGlobal("type.Int");

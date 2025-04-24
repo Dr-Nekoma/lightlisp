@@ -121,44 +121,90 @@ int main() {
   {
     auto &C = codegenContext.context();
     auto &builder = codegenContext.builder();
+    auto &M = codegenContext.module();
 
-    // main() : i32()
-    auto *FT =
-        llvm::FunctionType::get(builder.getInt32Ty(), /*no args*/ {}, false);
-    auto *wrapper = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
-                                           "main", &codegenContext.module());
+    // 1) Make the Function and its prototype
+    auto *FT = llvm::FunctionType::get(builder.getInt32Ty(), {}, false);
+    auto *wrapper =
+        llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "main", &M);
 
-    // entry:
-    auto *BB = llvm::BasicBlock::Create(C, "entry", wrapper);
-    builder.SetInsertPoint(BB);
+    // 2) Create three blocks: entry, body, exit
+    auto *entryBB = llvm::BasicBlock::Create(C, "entry", wrapper);
+    auto *bodyBB = llvm::BasicBlock::Create(C, "body", wrapper);
+    auto *exitBB = llvm::BasicBlock::Create(C, "exit", wrapper);
+    auto i8Ptr = llvm::PointerType::get(
+        llvm::IntegerType::get(codegenContext.context(), 8), 0);
+    // ——— ENTRY block — mmap and jump to body ———
+    builder.SetInsertPoint(entryBB);
+    // load size
+    auto *sizeVal = builder.CreateLoad(builder.getInt64Ty(),
+                                       codegenContext.getArenaSizeGV(), "size");
 
-    // 1) call your real lisp_main, now returns Value* (boxed)
+    int PROT_READ = 1;
+    int PROT_WRITE = 2;
+    int MAP_PRIVATE = 2;
+    int MAP_ANON = 0x20;
+    // constants for prot/flags
+    auto *prot = builder.getInt32(PROT_READ | PROT_WRITE);
+    auto *flags = builder.getInt32(MAP_ANON | MAP_PRIVATE);
+    auto *fd = builder.getInt32(-1);
+    auto *off = builder.getInt64(0);
+
+    // call mmap(NULL, size, prot, flags, fd, off)
+    auto *basePtr = builder.CreateCall(
+        codegenContext.getmmapFn(),
+        {llvm::Constant::getNullValue(i8Ptr), sizeVal, prot, flags, fd, off},
+        "arenaBaseRaw");
+    // store into your global
+    builder.CreateStore(basePtr, codegenContext.getArenaPtrGV());
+
+    // jump into the body
+    builder.CreateBr(bodyBB);
+
+    // ——— BODY block — call lisp_main & branch to exit ———
+    builder.SetInsertPoint(bodyBB);
+    // call your generated lisp_main (returns Value*)
     auto *boxedRet = builder.CreateCall(lispMain, {}, "boxedRet");
 
-    // 2) unbox: get &payload field
-    auto *payloadGEP =
-        builder.CreateStructGEP(codegenContext.getValueTy(), // struct Value
-                                boxedRet,                    // Value*
-                                1, // field index = payload
-                                "payload.ptr");
-
-    // 3) bitcast [8 x i8]* → i64*
+    // unbox → i64, truncate → i32
+    auto *payloadGEP = builder.CreateStructGEP(codegenContext.getValueTy(),
+                                               boxedRet, 1, "payload.ptr");
     auto *i64Ptr = builder.CreateBitCast(
         payloadGEP, builder.getInt64Ty()->getPointerTo(), "payload.i64.ptr");
-
-    // 4) load the raw i64
     auto *retI64 =
         builder.CreateLoad(builder.getInt64Ty(), i64Ptr, "unboxedRet");
-
-    // 5) truncate to i32
     auto *ret32 = builder.CreateTrunc(retI64, builder.getInt32Ty(), "ret32");
 
-    // 6) return the i32
-    builder.CreateRet(ret32);
+    // stash the return code in a spill slot (or pass it via a reg)
+    // for simplicity, we can branch with an i32 constant:
+    // but LLVM IR requires us to ret in one place, so:
+    builder.CreateBr(exitBB);
+    // remember ret32 in a PHI or alloca if needed…
+    // simplest is to alloca a temp at entry, store ret32, then reload below.
+
+    // ——— EXIT block — munmap and RET ———
+    builder.SetInsertPoint(exitBB);
+    // reload ret32 from that temp or compute inline
+    // (if your ABI lets you pass it in %eax/%edi you can omit this
+    // store+load)
+
+    // munmap(arenaBase, arenaSize)
+    auto *base =
+        builder.CreateLoad(i8Ptr, codegenContext.getArenaPtrGV(), "base");
+    auto *sizeVal2 = builder.CreateLoad(
+        builder.getInt64Ty(), codegenContext.getArenaSizeGV(), "size2");
+    builder.CreateCall(codegenContext.getmunmapFn(), {base, sizeVal2});
+
+    // finally return the i32
+    builder.CreateRet(ret32 /* or reload from alloca */);
   }
 
   for (auto &F : codegenContext.module()) {
     llvm::verifyFunction(F);
+  }
+
+  if (verifyModule(codegenContext.module(), &llvm::errs())) {
+    codegenContext.module().print(llvm::errs(), nullptr);
   }
 
   std::error_code EC;

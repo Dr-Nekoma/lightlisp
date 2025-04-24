@@ -72,9 +72,23 @@ public:
 
   llvm::PointerType *getPtrType();
 
+  llvm::Function *getmmapFn();
+
+  llvm::Function *getmunmapFn();
+
+  llvm::Function *getArenaAllocator();
+
+  llvm::GlobalVariable *getArenaPtrGV();
+
+  llvm::GlobalVariable *getArenaNextGV();
+
+  llvm::GlobalVariable *getArenaSizeGV();
+
   std::unordered_map<std::string, llvm::BasicBlock *> &lastTagEnv();
 
 private:
+  void defineArenaAlloc();
+
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::IRBuilder<>> builder_;
   std::unique_ptr<llvm::Module> module_;
@@ -83,4 +97,10 @@ private:
   llvm::StructType *typeDescTy_;
   llvm::StructType *valueTy_;
   llvm::PointerType *ptrTy_;
+  llvm::Function *mmapFn_ = nullptr;
+  llvm::Function *munmapFn_ = nullptr;
+  llvm::GlobalVariable *arenaPtrGV_ = nullptr;
+  llvm::GlobalVariable *arenaNextGV_ = nullptr;
+  llvm::GlobalVariable *arenaSizeGV_ = nullptr;
+  llvm::Function *arenaAllocValueFn_ = nullptr;
 };
