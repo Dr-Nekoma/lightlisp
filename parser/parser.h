@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../definitions/interfaces.h"
-#include "../scheme-tokenizer/tokenizer.h"
+#include "objects.h"
+#include "tokenizer.h"
 #include <concepts>
 #include <cstdint>
 #include <istream>

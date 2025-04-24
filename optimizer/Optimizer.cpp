@@ -1,4 +1,5 @@
 #include "Optimizer.h"
+#include <llvm/CodeGen/Passes.h>
 
 llvm::FunctionPassManager &Optimizer::getFPM() {
   static std::unique_ptr<llvm::FunctionPassManager> FAM =

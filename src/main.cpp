@@ -1,8 +1,11 @@
-#include "../definitions/interfaces.h"
-#include "../ir1lisp/ir1lisp.h"
-#include "../scheme-parser/parser.h"
-#include "../scheme-tokenizer/tokenizer.h"
 #include "Optimizer.h"
+#include "ir1lisp.h"
+#include "meta.h"
+#include "objects.h"
+#include "parser.h"
+#include "tokenizer.h"
+#include "types.h"
+
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/MC/TargetRegistry.h"
 #include <llvm/Support/FileSystem.h>
@@ -73,6 +76,10 @@ int genObjectFile(CodegenContext &codegenContext) {
   return std::make_unique<Function>(std::move(Proto), std::move(body));
 }*/
 
+void initTypes(CodegenContext &codegenContext) {
+  createBuiltinTypeDescs(codegenContext);
+}
+
 int main() {
   std::ifstream my_lisp("lisp.txt");
   if (!my_lisp) {
@@ -86,6 +93,7 @@ int main() {
   InitializeModuleAndManagers(codegenContext);
 
   std::vector<std::unique_ptr<Function>> functions;
+  initTypes(codegenContext);
   while (!parser.IsEnd()) {
     auto syntax = parser.Read();
     if (!syntax)
@@ -114,16 +122,38 @@ int main() {
     auto &C = codegenContext.context();
     auto &builder = codegenContext.builder();
 
-    auto *FT = llvm::FunctionType::get(llvm::Type::getInt32Ty(C), false);
+    // main() : i32()
+    auto *FT =
+        llvm::FunctionType::get(builder.getInt32Ty(), /*no args*/ {}, false);
     auto *wrapper = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
                                            "main", &codegenContext.module());
 
+    // entry:
     auto *BB = llvm::BasicBlock::Create(C, "entry", wrapper);
     builder.SetInsertPoint(BB);
 
-    auto *ret64 = builder.CreateCall(lispMain, {}, "call_lisp_main");
-    auto *ret32 =
-        builder.CreateTrunc(ret64, llvm::Type::getInt32Ty(C), "ret32");
+    // 1) call your real lisp_main, now returns Value* (boxed)
+    auto *boxedRet = builder.CreateCall(lispMain, {}, "boxedRet");
+
+    // 2) unbox: get &payload field
+    auto *payloadGEP =
+        builder.CreateStructGEP(codegenContext.getValueTy(), // struct Value
+                                boxedRet,                    // Value*
+                                1, // field index = payload
+                                "payload.ptr");
+
+    // 3) bitcast [8 x i8]* → i64*
+    auto *i64Ptr = builder.CreateBitCast(
+        payloadGEP, builder.getInt64Ty()->getPointerTo(), "payload.i64.ptr");
+
+    // 4) load the raw i64
+    auto *retI64 =
+        builder.CreateLoad(builder.getInt64Ty(), i64Ptr, "unboxedRet");
+
+    // 5) truncate to i32
+    auto *ret32 = builder.CreateTrunc(retI64, builder.getInt32Ty(), "ret32");
+
+    // 6) return the i32
     builder.CreateRet(ret32);
   }
 

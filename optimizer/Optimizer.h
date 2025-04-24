@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../definitions/interfaces.h"
+#include "meta.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/StandardInstrumentations.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
