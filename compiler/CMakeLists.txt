@@ -1,5 +1,6 @@
 add_library(compiler STATIC
   compiler.cpp
+  util.cpp
 )
 
 target_include_directories(compiler

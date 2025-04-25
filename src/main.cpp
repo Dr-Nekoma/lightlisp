@@ -1,10 +1,4 @@
-#include "Optimizer.h"
-#include "ir1lisp.h"
-#include "meta.h"
-#include "objects.h"
-#include "parser.h"
-#include "tokenizer.h"
-#include "types.h"
+#include "prepare.h"
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -66,7 +60,7 @@ int genObjectFile(CodegenContext &codegenContext) {
 }
 
 /*ObjPtr parseTopLevelExpr(ObjPtr body) {
-  if (auto *F = dynamic_cast<Function *>(body.get())) {
+  if (auto F = dynamic_cast<Function *>(body.get())) {
     return body;
   }
 
@@ -80,7 +74,7 @@ void initTypes(CodegenContext &codegenContext) {
   createBuiltinTypeDescs(codegenContext);
 }
 
-int main() {
+int main() { // Needs cleanup
   std::ifstream my_lisp("lisp.txt");
   if (!my_lisp) {
     llvm::errs() << "Error: cannot open lisp.txt\n";
@@ -92,29 +86,11 @@ int main() {
   CodegenContext codegenContext;
   InitializeModuleAndManagers(codegenContext);
 
-  std::vector<std::unique_ptr<Function>> functions;
   initTypes(codegenContext);
-  while (!parser.IsEnd()) {
-    auto syntax = parser.Read();
-    if (!syntax)
-      continue;
-    auto ast = ir1LispTransform(std::move(syntax));
+  std::vector<std::unique_ptr<Function>> functions =
+      prepareTopLevelFns(codegenContext, std::move(parser));
 
-    auto fnAST = dynamic_cast<Function *>(ast.release());
-    if (!fnAST)
-      throw std::runtime_error(
-          "Only function definitions allowed at top level");
-
-    functions.emplace_back(std::make_unique<Function>(std::move(*fnAST)));
-    llvm::errs() << functions.back()->getProto().getName() << '\n';
-  }
-
-  for (auto &Fptr : functions) {
-    if (!Fptr->codegen(codegenContext))
-      throw std::runtime_error("Codegen failed for a function");
-  }
-
-  auto *lispMain = codegenContext.module().getFunction("main");
+  auto lispMain = codegenContext.module().getFunction("main");
   if (!lispMain)
     throw std::runtime_error("`main` function not found in Lisp code");
   lispMain->setName("lisp_main");
@@ -124,39 +100,17 @@ int main() {
     auto &M = codegenContext.module();
 
     // 1) Make the Function and its prototype
-    auto *FT = llvm::FunctionType::get(builder.getInt32Ty(), {}, false);
-    auto *wrapper =
+    auto FT = llvm::FunctionType::get(builder.getInt32Ty(), {}, false);
+    auto wrapper =
         llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "main", &M);
 
     // 2) Create three blocks: entry, body, exit
-    auto *entryBB = llvm::BasicBlock::Create(C, "entry", wrapper);
-    auto *bodyBB = llvm::BasicBlock::Create(C, "body", wrapper);
-    auto *exitBB = llvm::BasicBlock::Create(C, "exit", wrapper);
-    auto i8Ptr = llvm::PointerType::get(
-        llvm::IntegerType::get(codegenContext.context(), 8), 0);
+    auto entryBB = llvm::BasicBlock::Create(C, "entry", wrapper);
+    auto bodyBB = llvm::BasicBlock::Create(C, "body", wrapper);
+    auto exitBB = llvm::BasicBlock::Create(C, "exit", wrapper);
     // ——— ENTRY block — mmap and jump to body ———
     builder.SetInsertPoint(entryBB);
-    // load size
-    auto *sizeVal = builder.CreateLoad(builder.getInt64Ty(),
-                                       codegenContext.getArenaSizeGV(), "size");
-
-    int PROT_READ = 1;
-    int PROT_WRITE = 2;
-    int MAP_PRIVATE = 2;
-    int MAP_ANON = 0x20;
-    // constants for prot/flags
-    auto *prot = builder.getInt32(PROT_READ | PROT_WRITE);
-    auto *flags = builder.getInt32(MAP_ANON | MAP_PRIVATE);
-    auto *fd = builder.getInt32(-1);
-    auto *off = builder.getInt64(0);
-
-    // call mmap(NULL, size, prot, flags, fd, off)
-    auto *basePtr = builder.CreateCall(
-        codegenContext.getmmapFn(),
-        {llvm::Constant::getNullValue(i8Ptr), sizeVal, prot, flags, fd, off},
-        "arenaBaseRaw");
-    // store into your global
-    builder.CreateStore(basePtr, codegenContext.getArenaPtrGV());
+    prepareArena(codegenContext);
 
     // jump into the body
     builder.CreateBr(bodyBB);
@@ -164,16 +118,8 @@ int main() {
     // ——— BODY block — call lisp_main & branch to exit ———
     builder.SetInsertPoint(bodyBB);
     // call your generated lisp_main (returns Value*)
-    auto *boxedRet = builder.CreateCall(lispMain, {}, "boxedRet");
 
-    // unbox → i64, truncate → i32
-    auto *payloadGEP = builder.CreateStructGEP(codegenContext.getValueTy(),
-                                               boxedRet, 1, "payload.ptr");
-    auto *i64Ptr = builder.CreateBitCast(
-        payloadGEP, builder.getInt64Ty()->getPointerTo(), "payload.i64.ptr");
-    auto *retI64 =
-        builder.CreateLoad(builder.getInt64Ty(), i64Ptr, "unboxedRet");
-    auto *ret32 = builder.CreateTrunc(retI64, builder.getInt32Ty(), "ret32");
+    auto ret32 = prepareCMain(codegenContext, lispMain);
 
     // stash the return code in a spill slot (or pass it via a reg)
     // for simplicity, we can branch with an i32 constant:
@@ -189,11 +135,7 @@ int main() {
     // store+load)
 
     // munmap(arenaBase, arenaSize)
-    auto *base =
-        builder.CreateLoad(i8Ptr, codegenContext.getArenaPtrGV(), "base");
-    auto *sizeVal2 = builder.CreateLoad(
-        builder.getInt64Ty(), codegenContext.getArenaSizeGV(), "size2");
-    builder.CreateCall(codegenContext.getmunmapFn(), {base, sizeVal2});
+    munmapArena(codegenContext);
 
     // finally return the i32
     builder.CreateRet(ret32 /* or reload from alloca */);

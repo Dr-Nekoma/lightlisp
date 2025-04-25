@@ -69,7 +69,7 @@ public:
     ListIterator &operator++() {
       if (!node_)
         throw std::runtime_error("increment past end");
-      auto *c = std::get_if<Cell>(node_);
+      auto c = std::get_if<Cell>(node_);
       if (!c)
         throw std::runtime_error("not a proper list");
       node_ = c->get<1>().get();

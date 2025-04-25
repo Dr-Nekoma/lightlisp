@@ -8,9 +8,9 @@ CodegenContext::CodegenContext()
       valueTy_(makeValueType(*this, typeDescTy_)),
       ptrTy_(llvm::PointerType::getUnqual(valueTy_)) {
 
-  auto *i8Ptr = llvm::PointerType::get(llvm::IntegerType::get(context(), 8), 0);
-  auto *i64Ty = llvm::Type::getInt64Ty(context());
-  auto *i32Ty = llvm::Type::getInt32Ty(context());
+  auto i8Ptr = llvm::PointerType::get(llvm::IntegerType::get(context(), 8), 0);
+  auto i64Ty = llvm::Type::getInt64Ty(context());
+  auto i32Ty = llvm::Type::getInt32Ty(context());
 
   // void* mmap(void*, size_t, int, int, int, off_t);
   // on Linux off_t is 64-bit:
@@ -22,12 +22,12 @@ CodegenContext::CodegenContext()
       i32Ty, // fd
       i64Ty  // offset
   };
-  auto *mmapFT = llvm::FunctionType::get(i8Ptr, mmapArgs, /*vararg*/ false);
+  auto mmapFT = llvm::FunctionType::get(i8Ptr, mmapArgs, /*vararg*/ false);
   mmapFn_ = cast<llvm::Function>(
       module().getOrInsertFunction("mmap", mmapFT).getCallee());
 
   // int munmap(void*, size_t);
-  auto *munmapFT =
+  auto munmapFT =
       llvm::FunctionType::get(i32Ty, {i8Ptr, i64Ty}, /*vararg*/ false);
   munmapFn_ = cast<llvm::Function>(
       module().getOrInsertFunction("munmap", munmapFT).getCallee());

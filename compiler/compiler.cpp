@@ -1,37 +1,8 @@
-#include "meta.h"
-#include "objects.h"
-#include "types.h"
-
-/// CreateEntryBlockAlloca - Create an alloca instruction in the entry block
-/// of the function.  This is used for mutable variables etc.
-static llvm::AllocaInst *CreateEntryBlockAlloca(CodegenContext &codegenContext,
-                                                llvm::Function *TheFunction,
-                                                llvm::Type *type,
-                                                const std::string &VarName) {
-  llvm::IRBuilder<> TmpB(&TheFunction->getEntryBlock(),
-                         TheFunction->getEntryBlock().begin());
-  return TmpB.CreateAlloca(type, nullptr, VarName);
-}
+#include "util.h"
 
 llvm::Value *Number::codegen(CodegenContext &codegenContext) {
-  llvm::StructType *ValueTy = codegenContext.getValueTy();
-  auto &builder = codegenContext.builder();
-
-  auto *boxed = builder.CreateCall(codegenContext.getArenaAllocator(), {},
-                                   "num" + std::to_string(value_));
-
-  auto *intDescGV = codegenContext.module().getNamedGlobal("type.Int");
-  auto *typeGEP = builder.CreateStructGEP(ValueTy, boxed, 0, "type.ptr");
-  builder.CreateStore(intDescGV, typeGEP);
-
-  //  store the raw i64 payload into the 8-byte union
-  auto *payloadGEP = builder.CreateStructGEP(ValueTy, boxed, 1, "payload.ptr");
-  auto *i64Ptr = builder.CreateBitCast(
-      payloadGEP, llvm::PointerType::get(builder.getInt64Ty(), 0),
-      "payload.i64.ptr");
-  builder.CreateStore(builder.getInt64(value_), i64Ptr);
-
-  return boxed;
+  return boxIntVal(codegenContext, codegenContext.builder().getInt64(value_),
+                   "num" + std::to_string(value_));
 }
 
 llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
@@ -81,27 +52,27 @@ llvm::Function *Prototype::codegen(CodegenContext &codegenContext) {
 
 llvm::Function *Function::codegen(CodegenContext &codegenContext) {
   // First, check for an existing function from a previous 'extern' declaration.
-  llvm::Function *TheFunction =
+  llvm::Function *currentFn =
       codegenContext.module().getFunction(proto_.getName());
 
-  if (!TheFunction)
-    TheFunction = proto_.codegen(codegenContext);
+  if (!currentFn)
+    currentFn = proto_.codegen(codegenContext);
 
-  if (!TheFunction)
+  if (!currentFn)
     return nullptr;
 
-  if (!TheFunction->empty())
+  if (!currentFn->empty())
     throw std::runtime_error("Function cannot be redefined.");
 
   // Create a new basic block to start insertion into.
   llvm::BasicBlock *BB =
-      llvm::BasicBlock::Create(codegenContext.context(), "entry", TheFunction);
+      llvm::BasicBlock::Create(codegenContext.context(), "entry", currentFn);
   codegenContext.builder().SetInsertPoint(BB);
 
   codegenContext.named_values().clear();
-  for (auto &Arg : TheFunction->args()) {
+  for (auto &Arg : currentFn->args()) {
     llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(
-        codegenContext, TheFunction, codegenContext.getPtrType(),
+        codegenContext, currentFn, codegenContext.getPtrType(),
         std::string(Arg.getName()));
 
     codegenContext.builder().CreateStore(&Arg, Alloca);
@@ -113,15 +84,15 @@ llvm::Function *Function::codegen(CodegenContext &codegenContext) {
   if (llvm::Value *RetVal = body_->codegen(codegenContext)) {
     codegenContext.builder().CreateRet(RetVal);
 
-    llvm::verifyFunction(*TheFunction);
+    llvm::verifyFunction(*currentFn);
 
-    // Optimizer::getFPM().run(*TheFunction, Optimizer::getFAM());
+    // Optimizer::getFPM().run(*currentFn, Optimizer::getFAM());
 
-    return TheFunction;
+    return currentFn;
   }
 
   // Error reading body, remove function.
-  TheFunction->eraseFromParent();
+  currentFn->eraseFromParent();
   return nullptr;
 }
 
@@ -131,7 +102,7 @@ llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
     // This assume we're building without RTTI because LLVM builds that way by
     // default. If you build LLVM with RTTI this can be changed to a
     // dynamic_cast for automatic error checking.
-    auto *LHSE = static_cast<Variable *>(fst_.get());
+    auto LHSE = static_cast<Variable *>(fst_.get());
     if (!LHSE)
       throw std::runtime_error("destination of '=' must be a variable");
 
@@ -150,33 +121,14 @@ llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
   }
 
   auto &builder = codegenContext.builder();
-  auto valueTy = codegenContext.getValueTy();
-
-  auto boxed =
-      builder.CreateCall(codegenContext.getArenaAllocator(), {}, "op.result");
 
   llvm::Value *fst = fst_->codegen(codegenContext);
   llvm::Value *snd = snd_->codegen(codegenContext);
   if (!fst || !snd) // a hack
     return nullptr;
 
-  llvm::Value *fstPayloadGEP =
-      builder.CreateStructGEP(valueTy, fst, 1, "fst.payload.ptr");
-  // reinterpret [8 x i8]* as i64*
-  llvm::Value *fstI64Ptr = builder.CreateBitCast(
-      fstPayloadGEP, builder.getInt64Ty()->getPointerTo(), "fst.i64.ptr");
-  // load the raw i64
-  llvm::Value *fstI64 =
-      builder.CreateLoad(builder.getInt64Ty(), fstI64Ptr, "fst.unboxed");
-
-  llvm::Value *sndPayloadGEP =
-      builder.CreateStructGEP(valueTy, snd, 1, "snd.payload.ptr");
-  // reinterpret [8 x i8]* as i64*
-  llvm::Value *sndI64Ptr = builder.CreateBitCast(
-      sndPayloadGEP, builder.getInt64Ty()->getPointerTo(), "snd.i64.ptr");
-  // load the raw i64
-  llvm::Value *sndI64 =
-      builder.CreateLoad(builder.getInt64Ty(), sndI64Ptr, "snd.unboxed");
+  auto fstI64 = unboxIntVal(codegenContext, fst);
+  auto sndI64 = unboxIntVal(codegenContext, snd);
 
   llvm::Value *res = nullptr;
   if (name_ == "+") {
@@ -192,20 +144,7 @@ llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
     throw std::runtime_error("Non existent operator");
   }
 
-  // 4b) store the TypeDesc* into field 0
-  llvm::GlobalVariable *intDescGV =
-      codegenContext.module().getNamedGlobal("type.Int");
-  llvm::Value *typeGEP = builder.CreateStructGEP(valueTy, boxed, 0, "type.ptr");
-  builder.CreateStore(intDescGV, typeGEP);
-
-  // 4c) store the i64 sum into field 1
-  llvm::Value *payloadGEP =
-      builder.CreateStructGEP(valueTy, boxed, 1, "payload.ptr");
-  llvm::Value *i64Ptr = builder.CreateBitCast(
-      payloadGEP, builder.getInt64Ty()->getPointerTo(), "payload.i64.ptr");
-  builder.CreateStore(res, i64Ptr);
-
-  return boxed;
+  return boxIntVal(codegenContext, res, "op" + name_ + ".result");
 }
 
 llvm::Value *If::codegen(CodegenContext &codegenContext) {
@@ -216,22 +155,15 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
   llvm::Value *condBoxed = Cond->codegen(codegenContext);
   if (!condBoxed)
     return nullptr;
-
-  // 2) Unbox the payload (i64) out of field #1
-  llvm::Value *payloadGEP = builder.CreateStructGEP(
-      codegenContext.getValueTy(), condBoxed, 1, "cond.payload.ptr");
-  llvm::Value *i64Ptr = builder.CreateBitCast(
-      payloadGEP, builder.getInt64Ty()->getPointerTo(), "cond.i64.ptr");
-  llvm::Value *rawCond =
-      builder.CreateLoad(builder.getInt64Ty(), i64Ptr, "cond.unboxed");
+  auto rawCond = unboxIntVal(codegenContext, condBoxed);
 
   // 3) Compare i64 != 0 → i1
   llvm::Value *condI1 =
       builder.CreateICmpNE(rawCond, builder.getInt64(0), "ifcond");
 
-  llvm::Function *ThisFunction = builder.GetInsertBlock()->getParent();
+  llvm::Function *currentFn = builder.GetInsertBlock()->getParent();
   llvm::BasicBlock *ThenBB =
-      llvm::BasicBlock::Create(context, "then", ThisFunction);
+      llvm::BasicBlock::Create(context, "then", currentFn);
   llvm::BasicBlock *ElseBB = llvm::BasicBlock::Create(context, "else");
   llvm::BasicBlock *MergeBB = llvm::BasicBlock::Create(context, "ifcont");
 
@@ -248,7 +180,7 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
   ThenBB = builder.GetInsertBlock();
 
   // Emit else block.
-  ThisFunction->insert(ThisFunction->end(), ElseBB);
+  currentFn->insert(currentFn->end(), ElseBB);
   builder.SetInsertPoint(ElseBB);
 
   llvm::Value *ElseV = Else->codegen(codegenContext);
@@ -259,7 +191,7 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
   // codegen of 'Else' can change the current block, update ElseBB for the PHI.
   ElseBB = builder.GetInsertBlock();
 
-  ThisFunction->insert(ThisFunction->end(), MergeBB);
+  currentFn->insert(currentFn->end(), MergeBB);
   builder.SetInsertPoint(MergeBB);
   llvm::PHINode *PN =
       builder.CreatePHI(codegenContext.getPtrType(), 2, "iftmp");
@@ -270,30 +202,30 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
 }
 
 llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
-  llvm::Function *TheFunction =
+  llvm::Function *currentFn =
       codegenContext.builder().GetInsertBlock()->getParent();
 
   codegenContext.tagEnvs().emplace_back();
 
   for (auto &item : body_) {
-    if (auto *tag =
+    if (auto tag =
             std::get_if<std::string>(&item)) { // check for the repeating tags
       codegenContext.lastTagEnv()[*tag] =
-          llvm::BasicBlock::Create(codegenContext.context(), *tag, TheFunction);
+          llvm::BasicBlock::Create(codegenContext.context(), *tag, currentFn);
     }
   }
 
   llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(
       codegenContext.context(),
       "tagbody.exit" + std::to_string(codegenContext.tagEnvs().size()),
-      TheFunction);
+      currentFn);
 
   llvm::Value *retVal = nullptr;
 
   llvm::BasicBlock *curBB = codegenContext.builder().GetInsertBlock();
 
   for (auto &item : body_) {
-    if (auto *tag = std::get_if<std::string>(&item)) {
+    if (auto tag = std::get_if<std::string>(&item)) {
       if (!curBB->getTerminator())
         codegenContext.builder().CreateBr(codegenContext.lastTagEnv()[*tag]);
       codegenContext.builder().SetInsertPoint(
@@ -318,11 +250,6 @@ llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
 
 llvm::Value *Go::codegen(CodegenContext &codegenContext) {
   auto &builder = codegenContext.builder();
-  auto valueTy = codegenContext.getValueTy();
-  auto *fn = builder.GetInsertBlock()->getParent();
-
-  auto boxed = codegenContext.builder().CreateCall(
-      codegenContext.getArenaAllocator(), {}, "op.result");
 
   llvm::BasicBlock *dest = nullptr;
   for (auto env = codegenContext.tagEnvs().rbegin();
@@ -337,29 +264,20 @@ llvm::Value *Go::codegen(CodegenContext &codegenContext) {
   if (!dest)
     throw std::runtime_error("Undefined tag in go: " + tag_);
 
-  llvm::GlobalVariable *intDescGV =
-      codegenContext.module().getNamedGlobal("type.Int");
-  llvm::Value *typeGEP = builder.CreateStructGEP(valueTy, boxed, 0, "type.ptr");
-  builder.CreateStore(intDescGV, typeGEP);
-
-  llvm::Value *payloadGEP =
-      builder.CreateStructGEP(valueTy, boxed, 1, "payload.ptr");
-  llvm::Value *i64Ptr = builder.CreateBitCast(
-      payloadGEP, builder.getInt64Ty()->getPointerTo(), "payload.i64.ptr");
-  builder.CreateStore(llvm::ConstantInt::get(
-                          llvm::Type::getInt64Ty(codegenContext.context()), 0),
-                      i64Ptr);
-
+  auto ret = boxIntVal(codegenContext,
+                       llvm::ConstantInt::get(
+                           llvm::Type::getInt64Ty(codegenContext.context()), 0),
+                       "0.nil");
   builder.CreateBr(dest);
 
-  return boxed;
+  return ret;
 }
 
 /*
 llvm::Value *VarExprAST::codegen(CodegenContext &codegenContext) {
   std::vector<llvm::AllocaInst *> OldBindings;
 
-  llvm::Function *TheFunction =
+  llvm::Function *currentFn =
       codegenContext.builder().GetInsertBlock()->getParent();
 
   // Register all variables and emit their initializer.
@@ -383,7 +301,7 @@ llvm::Value *VarExprAST::codegen(CodegenContext &codegenContext) {
           llvm::ConstantFP::get(codegenContext.context(), llvm::APFloat(0.0));
     }
 
-    llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, VarName);
+    llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(currentFn, VarName);
     codegenContext.builder().CreateStore(InitVal, Alloca);
 
     // Remember the old variable binding so that we can restore the binding when
