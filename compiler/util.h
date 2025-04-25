@@ -1,3 +1,4 @@
+#pragma once
 #include "meta.h"
 #include "objects.h"
 #include "types.h"
@@ -11,3 +12,5 @@ llvm::CallInst *boxIntVal(CodegenContext &codegenContext, llvm::Value *val,
                           std::string &&name);
 
 llvm::Value *unboxIntVal(CodegenContext &codegenContext, llvm::Value *val);
+
+std::string getBuiltInName(std::string &&name);

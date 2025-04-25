@@ -57,10 +57,6 @@ ObjectBuilder::ObjectBuilder() {
     return std::make_unique<BuiltInOp>(name, std::move(fst), std::move(snd));
   };
 
-  builders_["+"] = builtin_builder;
-  builders_["-"] = builtin_builder;
-  builders_["*"] = builtin_builder;
-  builders_["<"] = builtin_builder;
   builders_["setq"] = builtin_builder;
 
   auto tagbody_builder = [](ObjectBuilder &builder, std::string &,

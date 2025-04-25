@@ -6,4 +6,5 @@ add_library(definitions STATIC
 
 target_include_directories(definitions
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_SOURCE_DIR}/compiler
 )

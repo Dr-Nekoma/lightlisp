@@ -87,6 +87,7 @@ int main() { // Needs cleanup
   InitializeModuleAndManagers(codegenContext);
 
   initTypes(codegenContext);
+  initBuiltIns(codegenContext);
   std::vector<std::unique_ptr<Function>> functions =
       prepareTopLevelFns(codegenContext, std::move(parser));
 

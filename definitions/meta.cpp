@@ -1,4 +1,5 @@
 #include "meta.h"
+#include "util.h"
 
 CodegenContext::CodegenContext()
     : context_(std::make_unique<llvm::LLVMContext>()),
@@ -57,6 +58,12 @@ CodegenContext::CodegenContext()
       FT, llvm::Function::InternalLinkage, "arenaAllocValue", module());
 
   defineArenaAlloc();
+
+  {
+    for (auto &name : {"<", "+", "-", "*"}) {
+      internalNameTable_[std::string(name)] = getBuiltInName(std::string(name));
+    }
+  }
 }
 
 // Getter methods
@@ -68,6 +75,14 @@ llvm::Module &CodegenContext::module() { return *module_; }
 
 std::map<std::string, llvm::AllocaInst *> &CodegenContext::named_values() {
   return named_values_;
+}
+
+std::string CodegenContext::transformName(const std::string &name) {
+  if (auto res = internalNameTable_.find(name);
+      res != internalNameTable_.end()) {
+    return res->second;
+  }
+  return name;
 }
 
 std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &

@@ -51,6 +51,8 @@ class SpecialForm;
 
 using SyntaxObject = std::variant<Number, Symbol, Cell>;
 
+using IntOpFn = std::function<llvm::Value *(llvm::IRBuilder<> &, llvm::Value *,
+                                            llvm::Value *)>;
 class CodegenContext {
 public:
   CodegenContext();
@@ -63,6 +65,8 @@ public:
   llvm::Module &module();
 
   std::map<std::string, llvm::AllocaInst *> &named_values();
+
+  std::string transformName(const std::string &name);
 
   std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &tagEnvs();
 
@@ -94,6 +98,7 @@ private:
   std::unique_ptr<llvm::Module> module_;
   std::map<std::string, llvm::AllocaInst *> named_values_;
   std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> tagEnvs_;
+  std::unordered_map<std::string, std::string> internalNameTable_;
   llvm::StructType *typeDescTy_;
   llvm::StructType *valueTy_;
   llvm::PointerType *ptrTy_;

@@ -16,3 +16,8 @@ llvm::Value *prepareCMain(CodegenContext &codegenContext,
                           llvm::Function *lispMain);
 
 void munmapArena(CodegenContext &codegenContext);
+
+void emitBuiltIn(CodegenContext &codegenContext, std::string &&fnName,
+                 IntOpFn opFn);
+
+void initBuiltIns(CodegenContext &codegenContext);

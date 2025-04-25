@@ -8,6 +8,7 @@ target_include_directories(compiler
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/definitions
     ${CMAKE_SOURCE_DIR}/parser
+    ${CMAKE_SOURCE_DIR}/optimizer
 )
 
 target_link_libraries(compiler

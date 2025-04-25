@@ -44,3 +44,7 @@ llvm::Value *unboxIntVal(CodegenContext &codegenContext, llvm::Value *val) {
       builder.CreateLoad(builder.getInt64Ty(), valI64Ptr, "val.unboxed");
   return valI64;
 }
+
+std::string getBuiltInName(std::string &&name) {
+  return "__internal_op_" + std::string(name);
+}

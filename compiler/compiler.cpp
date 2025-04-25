@@ -1,3 +1,4 @@
+#include "Optimizer.h"
 #include "util.h"
 
 llvm::Value *Number::codegen(CodegenContext &codegenContext) {
@@ -16,7 +17,8 @@ llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
 
 llvm::Value *Call::codegen(CodegenContext &codegenContext) {
   // Look up the name in the global module table.
-  llvm::Function *CalleeF = codegenContext.module().getFunction(callee_);
+  llvm::Function *CalleeF = codegenContext.module().getFunction(
+      codegenContext.transformName(callee_));
   if (!CalleeF)
     throw std::runtime_error("Unknown function referenced");
 
@@ -86,7 +88,7 @@ llvm::Function *Function::codegen(CodegenContext &codegenContext) {
 
     llvm::verifyFunction(*currentFn);
 
-    // Optimizer::getFPM().run(*currentFn, Optimizer::getFAM());
+    Optimizer::getFPM().run(*currentFn, Optimizer::getFAM());
 
     return currentFn;
   }
@@ -119,32 +121,7 @@ llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
     codegenContext.builder().CreateStore(Val, Variable);
     return Val;
   }
-
-  auto &builder = codegenContext.builder();
-
-  llvm::Value *fst = fst_->codegen(codegenContext);
-  llvm::Value *snd = snd_->codegen(codegenContext);
-  if (!fst || !snd) // a hack
-    return nullptr;
-
-  auto fstI64 = unboxIntVal(codegenContext, fst);
-  auto sndI64 = unboxIntVal(codegenContext, snd);
-
-  llvm::Value *res = nullptr;
-  if (name_ == "+") {
-    res = builder.CreateAdd(fstI64, sndI64, "addtmp");
-  } else if (name_ == "-") {
-    res = builder.CreateSub(fstI64, sndI64, "subtmp");
-  } else if (name_ == "*") {
-    res = builder.CreateMul(fstI64, sndI64, "multmp");
-  } else if (name_ == "<") {
-    auto boolRes = builder.CreateICmpSLT(fstI64, sndI64, "cmptmp");
-    res = builder.CreateZExt(boolRes, builder.getInt64Ty(), "booltoint");
-  } else {
-    throw std::runtime_error("Non existent operator");
-  }
-
-  return boxIntVal(codegenContext, res, "op" + name_ + ".result");
+  return nullptr;
 }
 
 llvm::Value *If::codegen(CodegenContext &codegenContext) {
