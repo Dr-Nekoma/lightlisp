@@ -111,7 +111,7 @@ void emitBuiltIn(CodegenContext &codegenContext, std::string &&fnName,
   // apply the integer op
   llvm::Value *resI64 = opFn(builder, lhs, rhs);
 
-  auto boxed = boxIntVal(codegenContext, resI64, "ret");
+  auto boxed = boxIntVal(codegenContext, resI64, "ret." + fnName);
   // return it
   builder.CreateRet(boxed);
 }

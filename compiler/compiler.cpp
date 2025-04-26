@@ -181,6 +181,10 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
 llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
   llvm::Function *currentFn =
       codegenContext.builder().GetInsertBlock()->getParent();
+  auto &builder = codegenContext.builder();
+
+  auto lastVal = CreateEntryBlockAlloca(
+      codegenContext, currentFn, codegenContext.getPtrType(), "tagbody.ret");
 
   codegenContext.tagEnvs().emplace_back();
 
@@ -197,37 +201,33 @@ llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
       "tagbody.exit" + std::to_string(codegenContext.tagEnvs().size()),
       currentFn);
 
-  llvm::Value *retVal = nullptr;
-
-  llvm::BasicBlock *curBB = codegenContext.builder().GetInsertBlock();
+  llvm::BasicBlock *curBB = builder.GetInsertBlock();
 
   for (auto &item : body_) {
     if (auto tag = std::get_if<std::string>(&item)) {
       if (!curBB->getTerminator())
-        codegenContext.builder().CreateBr(codegenContext.lastTagEnv()[*tag]);
-      codegenContext.builder().SetInsertPoint(
-          codegenContext.lastTagEnv()[*tag]);
+        builder.CreateBr(codegenContext.lastTagEnv()[*tag]);
+      builder.SetInsertPoint(codegenContext.lastTagEnv()[*tag]);
     } else {
       auto &expr = std::get<ObjPtr>(item);
       auto v = expr->codegen(codegenContext);
       if (v)
-        retVal = v;
-      curBB = codegenContext.builder().GetInsertBlock();
+        builder.CreateStore(v, lastVal);
+      curBB = builder.GetInsertBlock();
     }
   }
 
   if (!curBB->getTerminator())
-    codegenContext.builder().CreateBr(afterBB);
-  codegenContext.builder().SetInsertPoint(afterBB);
-
+    builder.CreateBr(afterBB);
+  builder.SetInsertPoint(afterBB);
+  llvm::Value *last =
+      builder.CreateLoad(codegenContext.getPtrType(), lastVal, "tagbody.last");
   codegenContext.tagEnvs().pop_back();
 
-  return retVal;
+  return last;
 }
 
 llvm::Value *Go::codegen(CodegenContext &codegenContext) {
-  auto &builder = codegenContext.builder();
-
   llvm::BasicBlock *dest = nullptr;
   for (auto env = codegenContext.tagEnvs().rbegin();
        env != codegenContext.tagEnvs().rend(); ++env) {
@@ -241,13 +241,9 @@ llvm::Value *Go::codegen(CodegenContext &codegenContext) {
   if (!dest)
     throw std::runtime_error("Undefined tag in go: " + tag_);
 
-  auto ret = boxIntVal(codegenContext,
-                       llvm::ConstantInt::get(
-                           llvm::Type::getInt64Ty(codegenContext.context()), 0),
-                       "0.nil");
-  builder.CreateBr(dest);
+  codegenContext.builder().CreateBr(dest);
 
-  return ret;
+  return nullptr;
 }
 
 /*
