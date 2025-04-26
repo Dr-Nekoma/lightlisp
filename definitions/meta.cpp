@@ -7,7 +7,9 @@ CodegenContext::CodegenContext()
       module_(std::make_unique<llvm::Module>("my lisp", *context_)),
       typeDescTy_(makeTypeDescType(*this)),
       valueTy_(makeValueType(*this, typeDescTy_)),
-      ptrTy_(llvm::PointerType::getUnqual(valueTy_)) {
+      ptrTy_(llvm::PointerType::getUnqual(valueTy_)),
+      trapFn_(
+          llvm::Intrinsic::getDeclaration(&module(), llvm::Intrinsic::trap)) {
 
   auto i8Ptr = llvm::PointerType::get(llvm::IntegerType::get(context(), 8), 0);
   auto i64Ty = llvm::Type::getInt64Ty(context());
@@ -99,6 +101,8 @@ llvm::PointerType *CodegenContext::getPtrType() { return ptrTy_; }
 llvm::Function *CodegenContext::getmmapFn() { return mmapFn_; }
 
 llvm::Function *CodegenContext::getmunmapFn() { return munmapFn_; }
+
+llvm::Function *CodegenContext::getTrapFn() { return trapFn_; }
 
 llvm::Function *CodegenContext::getArenaAllocator() {
   return arenaAllocValueFn_;

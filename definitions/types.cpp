@@ -44,8 +44,6 @@ void createBuiltinTypeDescs(CodegenContext &codegenContext) {
                                     "type." + name);
   };
 
-  // e.g. kind 0 = Int, 1 = Float
   mkDesc("Int", 0);
   // mkDesc("Cell", 1);
-  //  users can add: mkDesc("MyStruct", 2), etc.
 }

@@ -20,4 +20,6 @@ void munmapArena(CodegenContext &codegenContext);
 void emitBuiltIn(CodegenContext &codegenContext, std::string &&fnName,
                  IntOpFn opFn);
 
+void emitPanic(CodegenContext &codegenContext);
+
 void initBuiltIns(CodegenContext &codegenContext);

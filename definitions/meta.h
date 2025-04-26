@@ -80,6 +80,8 @@ public:
 
   llvm::Function *getmunmapFn();
 
+  llvm::Function *getTrapFn();
+
   llvm::Function *getArenaAllocator();
 
   llvm::GlobalVariable *getArenaPtrGV();
@@ -104,6 +106,7 @@ private:
   llvm::PointerType *ptrTy_;
   llvm::Function *mmapFn_ = nullptr;
   llvm::Function *munmapFn_ = nullptr;
+  llvm::Function *trapFn_ = nullptr;
   llvm::GlobalVariable *arenaPtrGV_ = nullptr;
   llvm::GlobalVariable *arenaNextGV_ = nullptr;
   llvm::GlobalVariable *arenaSizeGV_ = nullptr;

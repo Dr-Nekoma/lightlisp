@@ -116,7 +116,67 @@ void emitBuiltIn(CodegenContext &codegenContext, std::string &&fnName,
   builder.CreateRet(boxed);
 }
 
+void emitPanic(CodegenContext &codegenContext) {
+  auto voidType = llvm::Type::getVoidTy(codegenContext.context());
+
+  llvm::FunctionType *FT =
+      llvm::FunctionType::get(voidType, {}, /*vararg=*/false);
+  llvm::Function *F = llvm::Function::Create(
+      FT, llvm::Function::InternalLinkage, "panic", codegenContext.module());
+
+  // entry block + store args into allocas
+  llvm::BasicBlock *BB =
+      llvm::BasicBlock::Create(codegenContext.context(), "entry", F);
+  llvm::IRBuilder<> builder(BB);
+
+  auto i8Ptr = llvm::PointerType::get(
+      llvm::IntegerType::get(codegenContext.context(), 8), 0);
+
+  auto base = builder.CreateLoad(i8Ptr, codegenContext.getArenaPtrGV(), "base");
+  auto sizeVal = builder.CreateLoad(builder.getInt64Ty(),
+                                    codegenContext.getArenaSizeGV(), "size");
+  builder.CreateCall(codegenContext.getmunmapFn(), {base, sizeVal});
+  builder.CreateCall(codegenContext.getTrapFn(), {});
+  builder.CreateUnreachable();
+}
+
+void emitBoxInt(CodegenContext &codegenContext) {
+  llvm::StructType *ValueTy = codegenContext.getValueTy();
+  auto &builder = codegenContext.builder();
+  auto i64Ty = codegenContext.builder().getInt64Ty();
+
+  llvm::FunctionType *FT = llvm::FunctionType::get(codegenContext.getPtrType(),
+                                                   {i64Ty}, /*vararg=*/false);
+  llvm::Function *F = llvm::Function::Create(
+      FT, llvm::Function::InternalLinkage, "boxInt", codegenContext.module());
+
+  F->addFnAttr(llvm::Attribute::AlwaysInline);
+  F->arg_begin()->setName("x");
+
+  llvm::BasicBlock *BB =
+      llvm::BasicBlock::Create(codegenContext.context(), "entry", F);
+
+  builder.SetInsertPoint(BB);
+
+  auto &arg = *F->arg_begin(); // x0
+
+  auto boxed =
+      builder.CreateCall(codegenContext.getArenaAllocator(), {}, "boxedVal");
+
+  auto intDescGV = codegenContext.module().getNamedGlobal("type.Int");
+  auto typeGEP = builder.CreateStructGEP(ValueTy, boxed, 0, "type.ptr");
+  builder.CreateStore(intDescGV, typeGEP);
+
+  auto payloadGEP = builder.CreateStructGEP(ValueTy, boxed, 1, "payload.ptr");
+  auto i64Ptr = builder.CreateBitCast(
+      payloadGEP, llvm::PointerType::get(i64Ty, 0), "payload.i64.ptr");
+  builder.CreateStore(&arg, i64Ptr);
+  builder.CreateRet(boxed);
+}
+
 void initBuiltIns(CodegenContext &codegenContext) {
+  emitPanic(codegenContext);
+  emitBoxInt(codegenContext);
   emitBuiltIn(
       codegenContext, "+",
       [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
