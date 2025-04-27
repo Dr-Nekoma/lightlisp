@@ -1,3 +1,4 @@
+#include "parser.h"
 #include "prepare.h"
 
 #include "llvm/IR/LegacyPassManager.h"
@@ -59,6 +60,32 @@ int genObjectFile(CodegenContext &codegenContext) {
   return 0;
 }
 
+static std::vector<std::unique_ptr<Function>>
+prepareTopLevelFns(CodegenContext &codegenContext, Parser &&parser) {
+  std::vector<std::unique_ptr<Function>> functions;
+
+  while (!parser.IsEnd()) {
+    auto syntax = parser.Read();
+    if (!syntax)
+      continue;
+    auto ast = ir1LispTransform(std::move(syntax));
+
+    auto fnAST = dynamic_cast<Function *>(ast.release());
+    if (!fnAST)
+      throw std::runtime_error(
+          "Only function definitions allowed at top level");
+
+    functions.emplace_back(std::make_unique<Function>(std::move(*fnAST)));
+    llvm::errs() << functions.back()->getProto().getName() << '\n';
+  }
+
+  for (auto &Fptr : functions) {
+    if (!Fptr->codegen(codegenContext))
+      throw std::runtime_error("Codegen failed for a function");
+  }
+  return functions;
+}
+
 /*ObjPtr parseTopLevelExpr(ObjPtr body) {
   if (auto F = dynamic_cast<Function *>(body.get())) {
     return body;
@@ -70,24 +97,25 @@ int genObjectFile(CodegenContext &codegenContext) {
   return std::make_unique<Function>(std::move(Proto), std::move(body));
 }*/
 
-void initTypes(CodegenContext &codegenContext) {
-  createBuiltinTypeDescs(codegenContext);
-}
-
-int main() { // Needs cleanup
-  std::ifstream my_lisp("lisp.txt");
-  if (!my_lisp) {
-    llvm::errs() << "Error: cannot open lisp.txt\n";
+int main(int argc, char **argv) { // Needs cleanup
+  if (argc < 2) {
+    llvm::errs() << "Usage: " << argv[0] << " <input-file>\n";
     return 1;
   }
+  std::string filename = argv[1];
+
+  std::ifstream my_lisp(filename);
+  if (!my_lisp) {
+    llvm::errs() << "Error: cannot open '" << filename << "'\n";
+    return 1;
+  }
+
   Tokenizer tok(&my_lisp);
   Parser parser(std::move(tok));
 
   CodegenContext codegenContext;
   InitializeModuleAndManagers(codegenContext);
 
-  initTypes(codegenContext);
-  initBuiltIns(codegenContext);
   std::vector<std::unique_ptr<Function>> functions =
       prepareTopLevelFns(codegenContext, std::move(parser));
 
@@ -151,7 +179,7 @@ int main() { // Needs cleanup
   }
 
   std::error_code EC;
-  llvm::raw_fd_ostream llOut("lisp.ll", EC, llvm::sys::fs::OF_Text);
+  llvm::raw_fd_ostream llOut(filename + ".ll", EC, llvm::sys::fs::OF_Text);
   if (EC)
     llvm::errs() << "Could not open lisp.ll for writing\n";
   else

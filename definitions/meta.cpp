@@ -1,4 +1,5 @@
 #include "meta.h"
+#include "prepare.h"
 #include "util.h"
 
 CodegenContext::CodegenContext()
@@ -61,11 +62,32 @@ CodegenContext::CodegenContext()
 
   defineArenaAlloc();
 
-  {
-    for (auto &name : {"<", "+", "-", "*"}) {
-      internalNameTable_[std::string(name)] = getBuiltInName(std::string(name));
-    }
-  }
+  createBuiltinTypeDescs(*this);
+
+  builtInFns_["panic"] = emitPanic(*this);
+  builtInFns_["boxInt"] = emitBoxInt(*this);
+  builtInFns_["unboxInt"] = emitUnBoxInt(*this);
+  builtInFns_["+"] = emitBuiltIn(
+      *this, getBuiltInName("+"),
+      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
+        return builder.CreateAdd(fst, snd, "addtmp");
+      });
+  builtInFns_["-"] = emitBuiltIn(
+      *this, getBuiltInName("-"),
+      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
+        return builder.CreateSub(fst, snd, "subtmp");
+      });
+  builtInFns_["*"] = emitBuiltIn(
+      *this, getBuiltInName("*"),
+      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
+        return builder.CreateMul(fst, snd, "multmp");
+      });
+  builtInFns_["<"] = emitBuiltIn(
+      *this, getBuiltInName("<"),
+      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
+        auto boolRes = builder.CreateICmpSLT(fst, snd, "cmptmp");
+        return builder.CreateZExt(boolRes, builder.getInt64Ty(), "booltoint");
+      });
 }
 
 // Getter methods
@@ -77,14 +99,6 @@ llvm::Module &CodegenContext::module() { return *module_; }
 
 std::map<std::string, llvm::AllocaInst *> &CodegenContext::named_values() {
   return named_values_;
-}
-
-std::string CodegenContext::transformName(const std::string &name) {
-  if (auto res = internalNameTable_.find(name);
-      res != internalNameTable_.end()) {
-    return res->second;
-  }
-  return name;
 }
 
 std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &
@@ -113,6 +127,13 @@ llvm::GlobalVariable *CodegenContext::getArenaPtrGV() { return arenaPtrGV_; }
 llvm::GlobalVariable *CodegenContext::getArenaNextGV() { return arenaNextGV_; }
 
 llvm::GlobalVariable *CodegenContext::getArenaSizeGV() { return arenaSizeGV_; }
+
+llvm::Function *CodegenContext::getFn(const std::string &name) {
+  if (auto it = builtInFns_.find(name); it != builtInFns_.end()) {
+    return it->second;
+  }
+  return module().getFunction(name);
+}
 
 std::unordered_map<std::string, llvm::BasicBlock *> &
 CodegenContext::lastTagEnv() {

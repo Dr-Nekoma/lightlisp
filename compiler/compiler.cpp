@@ -2,8 +2,15 @@
 #include "util.h"
 
 llvm::Value *Number::codegen(CodegenContext &codegenContext) {
-  return boxIntVal(codegenContext, codegenContext.builder().getInt64(value_),
-                   "num" + std::to_string(value_));
+  auto &B = codegenContext.builder();
+  llvm::Value *raw = B.getInt64(value_);
+
+  llvm::Function *boxFn = codegenContext.getFn("boxInt");
+
+  auto name = "num" + std::to_string(value_);
+  llvm::Value *boxed = B.CreateCall(boxFn, {raw}, name);
+
+  return boxed;
 }
 
 llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
@@ -17,8 +24,7 @@ llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
 
 llvm::Value *Call::codegen(CodegenContext &codegenContext) {
   // Look up the name in the global module table.
-  llvm::Function *CalleeF = codegenContext.module().getFunction(
-      codegenContext.transformName(callee_));
+  llvm::Function *CalleeF = codegenContext.getFn(callee_);
   if (!CalleeF)
     throw std::runtime_error("Unknown function referenced");
 
@@ -132,7 +138,9 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
   llvm::Value *condBoxed = Cond->codegen(codegenContext);
   if (!condBoxed)
     return nullptr;
-  auto rawCond = unboxIntVal(codegenContext, condBoxed);
+
+  llvm::Function *unboxFn = codegenContext.getFn("unboxInt");
+  auto rawCond = builder.CreateCall(unboxFn, {condBoxed}, "unboxedCond");
 
   // 3) Compare i64 != 0 → i1
   llvm::Value *condI1 =

@@ -1,31 +1,5 @@
 #include "prepare.h"
 
-std::vector<std::unique_ptr<Function>>
-prepareTopLevelFns(CodegenContext &codegenContext, Parser &&parser) {
-  std::vector<std::unique_ptr<Function>> functions;
-
-  while (!parser.IsEnd()) {
-    auto syntax = parser.Read();
-    if (!syntax)
-      continue;
-    auto ast = ir1LispTransform(std::move(syntax));
-
-    auto fnAST = dynamic_cast<Function *>(ast.release());
-    if (!fnAST)
-      throw std::runtime_error(
-          "Only function definitions allowed at top level");
-
-    functions.emplace_back(std::make_unique<Function>(std::move(*fnAST)));
-    llvm::errs() << functions.back()->getProto().getName() << '\n';
-  }
-
-  for (auto &Fptr : functions) {
-    if (!Fptr->codegen(codegenContext))
-      throw std::runtime_error("Codegen failed for a function");
-  }
-  return functions;
-}
-
 void prepareArena(CodegenContext &codegenContext) {
   auto &builder = codegenContext.builder();
   auto i8Ptr = llvm::PointerType::get(
@@ -56,7 +30,10 @@ llvm::Value *prepareCMain(CodegenContext &codegenContext,
                           llvm::Function *lispMain) {
   auto &builder = codegenContext.builder();
   auto boxedRet = builder.CreateCall(lispMain, {}, "boxedRet");
-  auto retI64 = unboxIntVal(codegenContext, boxedRet);
+  llvm::Function *unboxFn = codegenContext.getFn("unboxInt");
+  if (!unboxFn)
+    throw std::runtime_error("unboxInt not declared");
+  llvm::Value *retI64 = builder.CreateCall(unboxFn, {boxedRet}, "unboxedVal");
 
   auto ret32 = builder.CreateTrunc(retI64, builder.getInt32Ty(), "ret32");
   return ret32;
@@ -73,17 +50,15 @@ void munmapArena(CodegenContext &codegenContext) {
   builder.CreateCall(codegenContext.getmunmapFn(), {base, sizeVal2});
 }
 
-void emitBuiltIn(CodegenContext &codegenContext, std::string &&fnName,
-                 IntOpFn opFn) {
+llvm::Function *emitBuiltIn(CodegenContext &codegenContext,
+                            std::string &&fnName, IntOpFn opFn) {
   auto &builder = codegenContext.builder();
   auto ptrTy = codegenContext.getPtrType();
-  auto internalfnName = codegenContext.transformName(fnName);
   // -- declare: Value* @fnName(Value*,Value*)
   llvm::FunctionType *FT =
       llvm::FunctionType::get(ptrTy, {ptrTy, ptrTy}, /*vararg=*/false);
-  llvm::Function *F =
-      llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
-                             internalfnName, codegenContext.module());
+  llvm::Function *F = llvm::Function::Create(
+      FT, llvm::Function::ExternalLinkage, fnName, codegenContext.module());
   F->addFnAttr(llvm::Attribute::AlwaysInline);
 
   // name args %x0 %x1
@@ -104,19 +79,23 @@ void emitBuiltIn(CodegenContext &codegenContext, std::string &&fnName,
   }
 
   // unbox both arguments
-  llvm::Value *lhs = unboxIntVal(codegenContext, &*F->args().begin()); // x0
-  llvm::Value *rhs =
-      unboxIntVal(codegenContext, &*std::next(F->args().begin())); // x1
+  llvm::Function *unboxFn = codegenContext.getFn("unboxInt");
+  llvm::Value *lhs =
+      builder.CreateCall(unboxFn, {&*F->args().begin()}, "unboxedLHS");
+  llvm::Value *rhs = builder.CreateCall(
+      unboxFn, {&*std::next(F->args().begin())}, "unboxedRHS");
 
   // apply the integer op
   llvm::Value *resI64 = opFn(builder, lhs, rhs);
 
-  auto boxed = boxIntVal(codegenContext, resI64, "ret." + fnName);
+  llvm::Function *boxFn = codegenContext.getFn("boxInt");
+  auto boxed = builder.CreateCall(boxFn, {resI64}, "ret." + fnName);
   // return it
   builder.CreateRet(boxed);
+  return F;
 }
 
-void emitPanic(CodegenContext &codegenContext) {
+llvm::Function *emitPanic(CodegenContext &codegenContext) {
   auto voidType = llvm::Type::getVoidTy(codegenContext.context());
 
   llvm::FunctionType *FT =
@@ -138,12 +117,13 @@ void emitPanic(CodegenContext &codegenContext) {
   builder.CreateCall(codegenContext.getmunmapFn(), {base, sizeVal});
   builder.CreateCall(codegenContext.getTrapFn(), {});
   builder.CreateUnreachable();
+  return F;
 }
 
-void emitBoxInt(CodegenContext &codegenContext) {
+llvm::Function *emitBoxInt(CodegenContext &codegenContext) {
   llvm::StructType *ValueTy = codegenContext.getValueTy();
   auto &builder = codegenContext.builder();
-  auto i64Ty = codegenContext.builder().getInt64Ty();
+  auto i64Ty = builder.getInt64Ty();
 
   llvm::FunctionType *FT = llvm::FunctionType::get(codegenContext.getPtrType(),
                                                    {i64Ty}, /*vararg=*/false);
@@ -172,30 +152,66 @@ void emitBoxInt(CodegenContext &codegenContext) {
       payloadGEP, llvm::PointerType::get(i64Ty, 0), "payload.i64.ptr");
   builder.CreateStore(&arg, i64Ptr);
   builder.CreateRet(boxed);
+  return F;
 }
 
-void initBuiltIns(CodegenContext &codegenContext) {
-  emitPanic(codegenContext);
-  emitBoxInt(codegenContext);
-  emitBuiltIn(
-      codegenContext, "+",
-      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
-        return builder.CreateAdd(fst, snd, "addtmp");
-      });
-  emitBuiltIn(
-      codegenContext, "-",
-      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
-        return builder.CreateSub(fst, snd, "subtmp");
-      });
-  emitBuiltIn(
-      codegenContext, "*",
-      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
-        return builder.CreateMul(fst, snd, "multmp");
-      });
-  emitBuiltIn(
-      codegenContext, "<",
-      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
-        auto boolRes = builder.CreateICmpSLT(fst, snd, "cmptmp");
-        return builder.CreateZExt(boolRes, builder.getInt64Ty(), "booltoint");
-      });
+llvm::Function *emitUnBoxInt(CodegenContext &codegenContext) {
+  llvm::StructType *valueTy = codegenContext.getValueTy();
+  auto &builder = codegenContext.builder();
+  auto i64Ty = builder.getInt64Ty();
+  auto i32Ty = builder.getInt32Ty();
+
+  llvm::FunctionType *FT = llvm::FunctionType::get(
+      i64Ty, {codegenContext.getPtrType()}, /*vararg=*/false);
+  llvm::Function *F = llvm::Function::Create(
+      FT, llvm::Function::InternalLinkage, "unboxInt", codegenContext.module());
+
+  F->addFnAttr(llvm::Attribute::AlwaysInline);
+  F->arg_begin()->setName("x");
+
+  llvm::BasicBlock *BB =
+      llvm::BasicBlock::Create(codegenContext.context(), "entry", F);
+
+  builder.SetInsertPoint(BB);
+
+  auto &arg = *F->arg_begin(); // x0
+
+  auto tdGEP = builder.CreateStructGEP(valueTy, &arg, 0, "type.ptr");
+  auto tdPtr =
+      builder.CreateLoad(codegenContext.getTypeDescTy()->getPointerTo(), tdGEP,
+                         "type.description");
+
+  auto kindPtr = builder.CreateStructGEP(codegenContext.getTypeDescTy(), tdPtr,
+                                         1, "kind.ptr");
+  auto kind = builder.CreateLoad(i32Ty, kindPtr, "kind");
+
+  auto isInt = builder.CreateICmpEQ(
+      kind, llvm::ConstantInt::get(i32Ty, /*Int kind=*/0), "cmp.isIntKind");
+
+  auto contBB = llvm::BasicBlock::Create(codegenContext.context(), "unbox.ok",
+                                         BB->getParent());
+
+  auto panicBB = llvm::BasicBlock::Create(codegenContext.context(),
+                                          "unbox.error", BB->getParent());
+
+  builder.CreateCondBr(isInt, contBB, panicBB);
+
+  builder.SetInsertPoint(panicBB);
+  llvm::Function *panicFn = codegenContext.getFn("panic");
+
+  builder.CreateCall(panicFn, {});
+
+  builder.CreateUnreachable();
+
+  builder.SetInsertPoint(contBB);
+
+  llvm::Value *valPayloadGEP =
+      builder.CreateStructGEP(valueTy, &arg, 1, "val.payload.ptr");
+  llvm::Value *valI64Ptr = builder.CreateBitCast(
+      valPayloadGEP, builder.getInt64Ty()->getPointerTo(), "val.i64.ptr");
+  llvm::Value *valI64 =
+      builder.CreateLoad(builder.getInt64Ty(), valI64Ptr, "val.unboxed");
+  builder.CreateRet(valI64);
+
+  return F;
 }

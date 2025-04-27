@@ -1,6 +1,5 @@
 add_executable(lightlisp
   main.cpp
-  prepare.cpp
 )
 
 target_include_directories(lightlisp
