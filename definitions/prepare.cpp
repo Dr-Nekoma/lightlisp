@@ -50,51 +50,6 @@ void munmapArena(CodegenContext &codegenContext) {
   builder.CreateCall(codegenContext.getmunmapFn(), {base, sizeVal2});
 }
 
-llvm::Function *emitBuiltIn(CodegenContext &codegenContext,
-                            std::string &&fnName, IntOpFn opFn) {
-  auto &builder = codegenContext.builder();
-  auto ptrTy = codegenContext.getPtrType();
-  // -- declare: Value* @fnName(Value*,Value*)
-  llvm::FunctionType *FT =
-      llvm::FunctionType::get(ptrTy, {ptrTy, ptrTy}, /*vararg=*/false);
-  llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::ExternalLinkage, fnName, codegenContext.module());
-  F->addFnAttr(llvm::Attribute::AlwaysInline);
-
-  // name args %x0 %x1
-  unsigned idx = 0;
-  for (auto &arg : F->args())
-    arg.setName("x" + std::to_string(idx++));
-
-  // entry block + store args into allocas
-  llvm::BasicBlock *BB =
-      llvm::BasicBlock::Create(codegenContext.context(), "entry", F);
-  builder.SetInsertPoint(BB);
-  codegenContext.named_values().clear();
-  for (auto &arg : F->args()) {
-    auto name = std::string(arg.getName());
-    auto *slot = CreateEntryBlockAlloca(codegenContext, F, ptrTy, name);
-    builder.CreateStore(&arg, slot);
-    codegenContext.named_values()[name] = slot;
-  }
-
-  // unbox both arguments
-  llvm::Function *unboxFn = codegenContext.getFn("unboxInt");
-  llvm::Value *lhs =
-      builder.CreateCall(unboxFn, {&*F->args().begin()}, "unboxedLHS");
-  llvm::Value *rhs = builder.CreateCall(
-      unboxFn, {&*std::next(F->args().begin())}, "unboxedRHS");
-
-  // apply the integer op
-  llvm::Value *resI64 = opFn(builder, lhs, rhs);
-
-  llvm::Function *boxFn = codegenContext.getFn("boxInt");
-  auto boxed = builder.CreateCall(boxFn, {resI64}, "ret." + fnName);
-  // return it
-  builder.CreateRet(boxed);
-  return F;
-}
-
 llvm::Function *emitPanic(CodegenContext &codegenContext) {
   auto voidType = llvm::Type::getVoidTy(codegenContext.context());
 
@@ -143,7 +98,7 @@ llvm::Function *emitBoxInt(CodegenContext &codegenContext) {
   auto boxed =
       builder.CreateCall(codegenContext.getArenaAllocator(), {}, "boxedVal");
 
-  auto intDescGV = codegenContext.module().getNamedGlobal("type.Int");
+  auto intDescGV = codegenContext.getType("Int");
   auto typeGEP = builder.CreateStructGEP(ValueTy, boxed, 0, "type.ptr");
   builder.CreateStore(intDescGV, typeGEP);
 
@@ -215,3 +170,54 @@ llvm::Function *emitUnBoxInt(CodegenContext &codegenContext) {
 
   return F;
 }
+
+llvm::Function *emitCons(CodegenContext &codegenContext) {
+  auto valueTy = codegenContext.getValueTy();
+  auto valuePtrTy = codegenContext.getPtrType();
+  auto consTy = codegenContext.getConsTy();
+  auto consPtrTy = consTy->getPointerTo();
+  auto &builder = codegenContext.builder();
+
+  llvm::FunctionType *FT =
+      llvm::FunctionType::get(consPtrTy, {valuePtrTy, valuePtrTy},
+                              /*vararg=*/false);
+  llvm::Function *F =
+      llvm::Function::Create(FT, llvm::Function::InternalLinkage,
+                             "__internal_op_cons", codegenContext.module());
+
+  F->addFnAttr(llvm::Attribute::AlwaysInline);
+  auto it = F->arg_begin();
+  it->setName("car");
+  ++it;
+  it->setName("cdr");
+
+  auto *BB = llvm::BasicBlock::Create(codegenContext.context(), "entry", F);
+  builder.SetInsertPoint(BB);
+
+  auto *cell =
+      builder.CreateCall(codegenContext.getArenaAllocator(), {}, "cell");
+
+  auto *consPtr = builder.CreateBitCast(cell, consPtrTy, "cons.ptr");
+
+  it = F->arg_begin();
+  // write car
+  auto *carGEP = builder.CreateStructGEP(consTy, consPtr, 0, "car.gep");
+  builder.CreateStore(&*it, carGEP);
+  it++;
+  // write cdr
+  auto *cdrGEP = builder.CreateStructGEP(consTy, consPtr, 1, "cdr.gep");
+  builder.CreateStore(&*it, cdrGEP);
+
+  builder.CreateRet(consPtr);
+
+  return F;
+}
+/*
+llvm::Function *emitCar(CodegenContext &codegenContext);
+
+llvm::Function *emitCdr(CodegenContext &codegenContext);
+
+llvm::Function *emitBoxCons(CodegenContext &codegenContext);
+
+llvm::Function *emitUnBoxCons(CodegenContext &codegenContext);
+*/

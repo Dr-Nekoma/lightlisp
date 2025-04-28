@@ -13,11 +13,65 @@ llvm::Value *prepareCMain(CodegenContext &codegenContext,
 
 void munmapArena(CodegenContext &codegenContext);
 
+template <unsigned Arity, typename Op>
 llvm::Function *emitBuiltIn(CodegenContext &codegenContext,
-                            std::string &&fnName, IntOpFn opFn);
+                            llvm::StringRef fnName, Op opFn,
+                            llvm::Function *unboxFn, llvm::Function *boxFn) {
+  auto &M = codegenContext.module();
+  auto &C = codegenContext.context();
+  auto ptrTy = codegenContext.getPtrType();
+  // Build FunctionType: (ptr,ptr,… Arity times) -> ptr
+  llvm::SmallVector<llvm::Type *, Arity> params(Arity, ptrTy);
+  auto *FT = llvm::FunctionType::get(ptrTy, params, /*isVarArg=*/false);
+
+  auto *F =
+      llvm::Function::Create(FT, llvm::Function::ExternalLinkage, fnName, M);
+  F->addFnAttr(llvm::Attribute::AlwaysInline);
+
+  unsigned idx = 0;
+  for (auto &arg : F->args())
+    arg.setName(("x" + std::to_string(idx++)));
+
+  auto *entry = llvm::BasicBlock::Create(C, "entry", F);
+  llvm::IRBuilder<> B(entry);
+
+  llvm::SmallVector<llvm::Value *, Arity> rawArgs;
+  idx = 0;
+  for (auto &arg : F->args()) {
+    if (unboxFn) {
+      rawArgs.push_back(
+          B.CreateCall(unboxFn, {&arg}, ("u" + std::to_string(idx++))));
+    } else {
+      rawArgs.push_back(&arg);
+    }
+  }
+
+  llvm::Value *rawRes = opFn(B, rawArgs);
+
+  if (boxFn) {
+    llvm::Value *boxed = B.CreateCall(boxFn, {rawRes}, ("r_" + fnName).str());
+    B.CreateRet(boxed);
+  } else {
+    B.CreateRet(rawRes);
+  }
+
+  return F;
+}
 
 llvm::Function *emitPanic(CodegenContext &codegenContext);
 
 llvm::Function *emitBoxInt(CodegenContext &codegenContext);
 
 llvm::Function *emitUnBoxInt(CodegenContext &codegenContext);
+
+llvm::Function *emitCons(CodegenContext &codegenContext);
+
+/*
+llvm::Function *emitCar(CodegenContext &codegenContext);
+
+llvm::Function *emitCdr(CodegenContext &codegenContext);
+
+llvm::Function *emitBoxCons(CodegenContext &codegenContext);
+
+llvm::Function *emitUnBoxCons(CodegenContext &codegenContext);
+*/

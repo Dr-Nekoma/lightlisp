@@ -19,6 +19,12 @@ llvm::StructType *makeValueType(CodegenContext &codegenContext,
   return ValTy;
 }
 
+llvm::StructType *makeConsType(CodegenContext &codegenContext) {
+  auto valueTy = codegenContext.getValueTy();
+  return llvm::StructType::create(codegenContext.context(), {valueTy, valueTy},
+                                  "Cons");
+}
+
 void createBuiltinTypeDescs(CodegenContext &codegenContext) {
   auto TypeDescTy = codegenContext.getTypeDescTy();
   auto i32Ty = llvm::Type::getInt32Ty(codegenContext.context());
@@ -44,6 +50,6 @@ void createBuiltinTypeDescs(CodegenContext &codegenContext) {
                                     "type." + name);
   };
 
-  mkDesc("Int", 0);
-  // mkDesc("Cell", 1);
+  codegenContext.addType("Int", mkDesc("Int", 0));
+  codegenContext.addType("Cons", mkDesc("Cons", 1));
 }

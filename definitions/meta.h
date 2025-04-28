@@ -92,6 +92,12 @@ public:
 
   llvm::Function *getFn(const std::string &name);
 
+  void addType(const std::string &name, llvm::GlobalVariable *type);
+
+  llvm::GlobalVariable *getType(const std::string &name);
+
+  llvm::StructType *getConsTy();
+
 private:
   void defineArenaAlloc();
 
@@ -100,9 +106,13 @@ private:
   std::unique_ptr<llvm::Module> module_;
   std::map<std::string, llvm::AllocaInst *> named_values_;
   std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> tagEnvs_;
+
   llvm::StructType *typeDescTy_;
   llvm::StructType *valueTy_;
   llvm::PointerType *ptrTy_;
+
+  llvm::StructType *consTy_;
+
   llvm::Function *mmapFn_ = nullptr;
   llvm::Function *munmapFn_ = nullptr;
   llvm::Function *trapFn_ = nullptr;
@@ -110,5 +120,8 @@ private:
   llvm::GlobalVariable *arenaNextGV_ = nullptr;
   llvm::GlobalVariable *arenaSizeGV_ = nullptr;
   llvm::Function *arenaAllocValueFn_ = nullptr;
+
   std::unordered_map<std::string, llvm::Function *> builtInFns_;
+
+  std::unordered_map<std::string, llvm::GlobalVariable *> builtInTypes_;
 };

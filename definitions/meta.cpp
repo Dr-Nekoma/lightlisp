@@ -9,8 +9,8 @@ CodegenContext::CodegenContext()
       typeDescTy_(makeTypeDescType(*this)),
       valueTy_(makeValueType(*this, typeDescTy_)),
       ptrTy_(llvm::PointerType::getUnqual(valueTy_)),
-      trapFn_(
-          llvm::Intrinsic::getDeclaration(&module(), llvm::Intrinsic::trap)) {
+      consTy_(makeConsType(*this)), trapFn_(llvm::Intrinsic::getDeclaration(
+                                        &module(), llvm::Intrinsic::trap)) {
 
   auto i8Ptr = llvm::PointerType::get(llvm::IntegerType::get(context(), 8), 0);
   auto i64Ty = llvm::Type::getInt64Ty(context());
@@ -67,27 +67,33 @@ CodegenContext::CodegenContext()
   builtInFns_["panic"] = emitPanic(*this);
   builtInFns_["boxInt"] = emitBoxInt(*this);
   builtInFns_["unboxInt"] = emitUnBoxInt(*this);
-  builtInFns_["+"] = emitBuiltIn(
+  builtInFns_[getBuiltInName("cons")] = emitCons(*this);
+
+  builtInFns_["+"] = emitBuiltIn<2>(
       *this, getBuiltInName("+"),
-      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
-        return builder.CreateAdd(fst, snd, "addtmp");
-      });
-  builtInFns_["-"] = emitBuiltIn(
+      [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+        return builder.CreateAdd(a[0], a[1], "addtmp");
+      },
+      getFn("unboxInt"), getFn("boxInt"));
+  builtInFns_["-"] = emitBuiltIn<2>(
       *this, getBuiltInName("-"),
-      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
-        return builder.CreateSub(fst, snd, "subtmp");
-      });
-  builtInFns_["*"] = emitBuiltIn(
+      [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+        return builder.CreateSub(a[0], a[1], "subtmp");
+      },
+      getFn("unboxInt"), getFn("boxInt"));
+  builtInFns_["*"] = emitBuiltIn<2>(
       *this, getBuiltInName("*"),
-      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
-        return builder.CreateMul(fst, snd, "multmp");
-      });
-  builtInFns_["<"] = emitBuiltIn(
+      [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+        return builder.CreateMul(a[0], a[1], "multmp");
+      },
+      getFn("unboxInt"), getFn("boxInt"));
+  builtInFns_["<"] = emitBuiltIn<2>(
       *this, getBuiltInName("<"),
-      [](llvm::IRBuilder<> &builder, llvm::Value *fst, llvm::Value *snd) {
-        auto boolRes = builder.CreateICmpSLT(fst, snd, "cmptmp");
+      [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+        auto boolRes = builder.CreateICmpSLT(a[0], a[1], "cmptmp");
         return builder.CreateZExt(boolRes, builder.getInt64Ty(), "booltoint");
-      });
+      },
+      getFn("unboxInt"), getFn("boxInt"));
 }
 
 // Getter methods
@@ -134,6 +140,20 @@ llvm::Function *CodegenContext::getFn(const std::string &name) {
   }
   return module().getFunction(name);
 }
+
+void CodegenContext::addType(const std::string &name,
+                             llvm::GlobalVariable *type) {
+  builtInTypes_.emplace(name, type);
+}
+
+llvm::GlobalVariable *CodegenContext::getType(const std::string &name) {
+  if (auto it = builtInTypes_.find(name); it != builtInTypes_.end()) {
+    return it->second;
+  }
+  return nullptr;
+}
+
+llvm::StructType *CodegenContext::getConsTy() { return consTy_; }
 
 std::unordered_map<std::string, llvm::BasicBlock *> &
 CodegenContext::lastTagEnv() {
