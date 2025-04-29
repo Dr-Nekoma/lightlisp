@@ -99,7 +99,7 @@ public:
   llvm::StructType *getConsTy();
 
 private:
-  void defineArenaAlloc();
+  llvm::Function *defineArenaAlloc();
 
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::IRBuilder<>> builder_;

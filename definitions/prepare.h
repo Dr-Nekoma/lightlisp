@@ -22,9 +22,9 @@ llvm::Function *emitBuiltIn(CodegenContext &codegenContext,
   auto ptrTy = codegenContext.getPtrType();
   // Build FunctionType: (ptr,ptr,… Arity times) -> ptr
   llvm::SmallVector<llvm::Type *, Arity> params(Arity, ptrTy);
-  auto *FT = llvm::FunctionType::get(ptrTy, params, /*isVarArg=*/false);
+  auto FT = llvm::FunctionType::get(ptrTy, params, /*isVarArg=*/false);
 
-  auto *F =
+  auto F =
       llvm::Function::Create(FT, llvm::Function::ExternalLinkage, fnName, M);
   F->addFnAttr(llvm::Attribute::AlwaysInline);
 
@@ -32,7 +32,7 @@ llvm::Function *emitBuiltIn(CodegenContext &codegenContext,
   for (auto &arg : F->args())
     arg.setName(("x" + std::to_string(idx++)));
 
-  auto *entry = llvm::BasicBlock::Create(C, "entry", F);
+  auto entry = llvm::BasicBlock::Create(C, "entry", F);
   llvm::IRBuilder<> B(entry);
 
   llvm::SmallVector<llvm::Value *, Arity> rawArgs;
@@ -49,7 +49,7 @@ llvm::Function *emitBuiltIn(CodegenContext &codegenContext,
   llvm::Value *rawRes = opFn(B, rawArgs);
 
   if (boxFn) {
-    llvm::Value *boxed = B.CreateCall(boxFn, {rawRes}, ("r_" + fnName).str());
+    llvm::Value *boxed = B.CreateCall(boxFn, {rawRes}, ("res." + fnName).str());
     B.CreateRet(boxed);
   } else {
     B.CreateRet(rawRes);
@@ -66,7 +66,6 @@ llvm::Function *emitUnBoxInt(CodegenContext &codegenContext);
 
 llvm::Function *emitCons(CodegenContext &codegenContext);
 
-/*
 llvm::Function *emitCar(CodegenContext &codegenContext);
 
 llvm::Function *emitCdr(CodegenContext &codegenContext);
@@ -74,4 +73,3 @@ llvm::Function *emitCdr(CodegenContext &codegenContext);
 llvm::Function *emitBoxCons(CodegenContext &codegenContext);
 
 llvm::Function *emitUnBoxCons(CodegenContext &codegenContext);
-*/

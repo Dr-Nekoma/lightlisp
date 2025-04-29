@@ -39,7 +39,12 @@ llvm::Value *Call::codegen(CodegenContext &codegenContext) {
       return nullptr;
   }
 
-  return codegenContext.builder().CreateCall(CalleeF, ArgsV, "calltmp");
+  auto call = codegenContext.builder().CreateCall(CalleeF, ArgsV, "calltmp");
+  if (callee_ == "car" || callee_ == "cdr") { // FIXME this can't be good
+    call->setOnlyReadsMemory();
+  }
+
+  return call;
 }
 
 llvm::Function *Prototype::codegen(CodegenContext &codegenContext) {
@@ -254,54 +259,39 @@ llvm::Value *Go::codegen(CodegenContext &codegenContext) {
   return nullptr;
 }
 
-/*
-llvm::Value *VarExprAST::codegen(CodegenContext &codegenContext) {
-  std::vector<llvm::AllocaInst *> OldBindings;
+llvm::Value *Let::codegen(CodegenContext &codegenContext) {
+  llvm::AllocaInst *oldBindings;
 
   llvm::Function *currentFn =
       codegenContext.builder().GetInsertBlock()->getParent();
 
-  // Register all variables and emit their initializer.
-  for (auto &Var : VarNames) {
-    const std::string &VarName = Var.first;
-    ExprAST *Init = Var.second.get();
+  // Emit the initializer before adding the variable to scope, this prevents
+  // the initializer from referencing the variable itself.
+  llvm::Value *initVal;
 
-    // Emit the initializer before adding the variable to scope, this prevents
-    // the initializer from referencing the variable itself, and permits stuff
-    // like this:
-    //  var a = 1 in
-    //    var a = a in ...   # refers to outer 'a'.
-    llvm::Value *InitVal;
+  initVal = init_->codegen(codegenContext);
+  if (!initVal)
+    return nullptr;
 
-    if (Init) {
-      InitVal = Init->codegen(CodegenContext & CodegenContext);
-      if (!InitVal)
-        return nullptr;
-    } else { // If not specified, use 0.0.
-      InitVal =
-          llvm::ConstantFP::get(codegenContext.context(), llvm::APFloat(0.0));
-    }
+  llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(
+      codegenContext, currentFn, codegenContext.getPtrType(), name_);
+  codegenContext.builder().CreateStore(initVal, Alloca);
 
-    llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(currentFn, VarName);
-    codegenContext.builder().CreateStore(InitVal, Alloca);
+  // Remember the old variable binding so that we can restore the binding when
+  // we unrecurse.
+  oldBindings = codegenContext.named_values()[name_];
 
-    // Remember the old variable binding so that we can restore the binding when
-    // we unrecurse.
-    OldBindings.push_back(codegenContext.named_values()[VarName]);
-
-    // Remember this binding.
-    codegenContext.named_values()[VarName] = Alloca;
-  }
+  // Remember this binding.
+  codegenContext.named_values()[name_] = Alloca;
 
   // Codegen the body, now that all vars are in scope.
-  llvm::Value *BodyVal = Body->codegen(CodegenContext & CodegenContext);
+  llvm::Value *BodyVal = body_->codegen(codegenContext);
   if (!BodyVal)
     return nullptr;
 
-  // Pop all our variables from scope.
-  for (unsigned i = 0, e = VarNames.size(); i != e; ++i)
-    codegenContext.named_values()[VarNames[i].first] = OldBindings[i];
+  // Pop our variable from scope.
+  codegenContext.named_values()[name_] = oldBindings;
 
   // Return the body computation.
   return BodyVal;
-}*/
+}

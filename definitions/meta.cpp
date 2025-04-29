@@ -52,15 +52,7 @@ CodegenContext::CodegenContext()
       /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
       llvm::ConstantInt::get(i64Ty, arenaCapacity), "arenaSize");
 
-  // allocValue(): Value* ()
-  llvm::FunctionType *FT = llvm::FunctionType::get(
-      /*RetTy=*/getPtrType(),
-      /*Params=*/{},
-      /*isVarArg=*/false);
-  arenaAllocValueFn_ = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, "arenaAllocValue", module());
-
-  defineArenaAlloc();
+  arenaAllocValueFn_ = defineArenaAlloc();
 
   createBuiltinTypeDescs(*this);
 
@@ -68,6 +60,10 @@ CodegenContext::CodegenContext()
   builtInFns_["boxInt"] = emitBoxInt(*this);
   builtInFns_["unboxInt"] = emitUnBoxInt(*this);
   builtInFns_[getBuiltInName("cons")] = emitCons(*this);
+  builtInFns_["boxCons"] = emitBoxCons(*this);
+  builtInFns_["unboxCons"] = emitUnBoxCons(*this);
+  builtInFns_[getBuiltInName("car")] = emitCar(*this);
+  builtInFns_[getBuiltInName("cdr")] = emitCdr(*this);
 
   builtInFns_["+"] = emitBuiltIn<2>(
       *this, getBuiltInName("+"),
@@ -94,6 +90,35 @@ CodegenContext::CodegenContext()
         return builder.CreateZExt(boolRes, builder.getInt64Ty(), "booltoint");
       },
       getFn("unboxInt"), getFn("boxInt"));
+
+  builtInFns_["cons"] = emitBuiltIn<2>( // FIXME should I even cache normal
+                                        // (even if predefined) functions?
+      *this, "cons",
+      [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+        return builder.CreateCall(getFn(getBuiltInName("cons")), {a[0], a[1]},
+                                  "cons.ret");
+      },
+      nullptr, getFn("boxCons"));
+  builtInFns_["car"] = emitBuiltIn<1>(
+      *this, "car",
+      [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+        auto call =
+            builder.CreateCall(getFn(getBuiltInName("car")), {a[0]}, "car.ret");
+        call->setOnlyReadsMemory();
+        call->setDoesNotThrow();
+        return call;
+      },
+      getFn("unboxCons"), nullptr);
+  builtInFns_["cdr"] = emitBuiltIn<1>(
+      *this, "cdr",
+      [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+        auto call =
+            builder.CreateCall(getFn(getBuiltInName("cdr")), {a[0]}, "cdr.ret");
+        call->setOnlyReadsMemory();
+        call->setDoesNotThrow();
+        return call;
+      },
+      getFn("unboxCons"), nullptr);
 }
 
 // Getter methods
@@ -162,25 +187,34 @@ CodegenContext::lastTagEnv() {
   return tagEnvs_.back();
 }
 
-void CodegenContext::defineArenaAlloc() {
+llvm::Function *CodegenContext::defineArenaAlloc() {
   auto &C = context();
   auto &B = builder();
   auto DL = module().getDataLayout();
 
-  // Create its entry block
-  llvm::BasicBlock *entry =
-      llvm::BasicBlock::Create(C, "entry", arenaAllocValueFn_);
+  auto i64Ty = llvm::Type::getInt64Ty(context());
+  auto i8Ptr = llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0);
+
+  auto FT = llvm::FunctionType::get(
+      /*RetTy=*/i8Ptr,
+      /*Params=*/{i64Ty},
+      /*isVarArg=*/false);
+  auto allocator = llvm::Function::Create(FT, llvm::Function::InternalLinkage,
+                                          "arenaAllocValue", module());
+
+  auto it = allocator->arg_begin();
+  it->setName("size");
+
+  llvm::BasicBlock *entry = llvm::BasicBlock::Create(C, "entry", allocator);
   B.SetInsertPoint(entry);
 
   // Load the current index
   llvm::Value *idx =
       B.CreateLoad(getArenaNextGV()->getValueType(), getArenaNextGV(), "idx");
 
-  // Compute the byte-offset = idx * sizeof(ValueTy)
-  uint64_t elemSize = DL.getTypeAllocSize(getValueTy());
-  llvm::Value *offset = B.CreateMul(
-      idx, llvm::ConstantInt::get(llvm::Type::getInt64Ty(C), elemSize),
-      "offsetBytes");
+  // Compute the byte-offset = idx * size
+  auto size = &*it;
+  llvm::Value *offset = B.CreateMul(idx, size, "offsetBytes");
 
   // Load the base pointer (i8*)
   llvm::Value *base =
@@ -196,12 +230,10 @@ void CodegenContext::defineArenaAlloc() {
       idx, llvm::ConstantInt::get(llvm::Type::getInt64Ty(C), 1), "idxPlus");
   B.CreateStore(nextIdx, getArenaNextGV());
 
-  // Cast raw i8* → Value*
-  llvm::Value *cellPtr = B.CreateBitCast(rawCellPtr, getPtrType(), "cellPtr");
+  // No cast, this is raw allocated space
+  B.CreateRet(rawCellPtr);
 
-  // Return the new cell pointer
-  B.CreateRet(cellPtr);
+  return allocator;
 
-  // (Optionally, you could add a bounds‐check before step 4 and trap if
-  //  idx >= capacity.)
+  // (Optionally, could add a bounds‐check before step 4 and trap if
 }

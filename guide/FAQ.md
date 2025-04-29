@@ -59,7 +59,7 @@ llvm::Module M("my_module", *ctx);
 - **Creation**:
 
   ```c++
-  auto *BB = llvm::BasicBlock::Create(ctx, "entry", parentFunction);
+  auto BB = llvm::BasicBlock::Create(ctx, "entry", parentFunction);
   builder.SetInsertPoint(BB);
   ```
 
@@ -73,8 +73,8 @@ llvm::Module M("my_module", *ctx);
 - **Creation**:
 
   ```c++
-  auto *FT = llvm::FunctionType::get(retTy, argTypes, /*vararg=*/false);
-  auto *F  = llvm::Function::Create(
+  auto FT = llvm::FunctionType::get(retTy, argTypes, /*vararg=*/false);
+  auto F  = llvm::Function::Create(
       FT, llvm::Function::ExternalLinkage, "foo", &module);
   ```
 
@@ -98,7 +98,7 @@ llvm::Module M("my_module", *ctx);
   - You can mark it as a tail call:
 
     ```c++
-    auto *CI = builder.CreateCall(fn, args);
+    auto CI = builder.CreateCall(fn, args);
     CI->setTailCallKind(llvm::CallInst::TCK_Tail);
     ```
 
@@ -129,7 +129,7 @@ This emits the final instruction of a BasicBlock and ends it. You cannot append 
 - **StructType**:
 
   ```c++
-  auto *ST = StructType::create(ctx, "MyStruct");
+  auto ST = StructType::create(ctx, "MyStruct");
   ST->setBody({ Ty1, Ty2, … }, /*isPacked=*/false);
   ```
 
@@ -239,7 +239,7 @@ LLVM requires every **BasicBlock** to end in a **terminator** instruction that t
 
   ```c++
   // value : i32, defaultBB, list of (caseValue, caseBB)
-  auto *sw = builder.CreateSwitch(value, defaultBB, numCases);
+  auto sw = builder.CreateSwitch(value, defaultBB, numCases);
   sw->addCase(builder.getInt32(42), caseBB42);
   ```
 
@@ -256,7 +256,7 @@ LLVM requires every **BasicBlock** to end in a **terminator** instruction that t
 
   ```c++
   // addr : label*, defaultBB
-  auto *ib = builder.CreateIndirectBr(addr, numDests);
+  auto ib = builder.CreateIndirectBr(addr, numDests);
   ib->addDestination(destBB1);
   ```
 
@@ -310,7 +310,7 @@ Used to **merge SSA values** from multiple predecessor blocks:
 
 ```c++
 // inside the merge block, after creating ThenBB and ElseBB
-auto *PN = builder.CreatePHI(resultTy, /*numIncoming=*/2, "iftmp");
+auto PN = builder.CreatePHI(resultTy, /*numIncoming=*/2, "iftmp");
 PN->addIncoming(thenValue, ThenBB);
 PN->addIncoming(elseValue, ElseBB);
 ```

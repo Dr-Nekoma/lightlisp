@@ -208,18 +208,15 @@ private:
   std::string tag_;
 };
 
-/*
-/// VarObject - Expression class for var/in
-class VarObject : public Object {
-  std::vector<std::pair<std::string, std::unique_ptr<Object>>> VarNames;
-  std::unique_ptr<Object> Body;
+class Let : public Object {
+  std::string name_;
+  ObjPtr init_;
+  ObjPtr body_;
 
 public:
-  VarObject(
-      std::vector<std::pair<std::string, std::unique_ptr<Object>>> VarNames,
-      std::unique_ptr<Object> Body)
-      : VarNames(std::move(VarNames)), Body(std::move(Body)) {}
+  Let(std::string &&name, ObjPtr init, ObjPtr body)
+      : name_(std::move(name)), init_(std::move(init)), body_(std::move(body)) {
+  }
 
   llvm::Value *codegen(CodegenContext &CodegenContext) override;
 };
-*/

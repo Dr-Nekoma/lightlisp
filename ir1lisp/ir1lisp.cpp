@@ -87,6 +87,25 @@ ObjectBuilder::ObjectBuilder() {
   };
 
   builders_["go"] = go_builder;
+
+  auto let_builder = [](ObjectBuilder &builder, std::string &name,
+                        SyntaxObject *syntax) -> ObjPtr {
+    auto view = Cell::ListView(syntax);
+    auto it = view.begin();
+    if (auto sym = std::get_if<Symbol>(&*it)) {
+      auto name = sym->getName();
+      it++;
+      auto init = codeWalk(builder, *it);
+      it++;
+      auto body = codeWalk(builder, *it);
+      return std::make_unique<Let>(std::move(name), std::move(init),
+                                   std::move(body));
+    } else {
+      throw std::runtime_error("Non symbol cannot be a variable name");
+    }
+  };
+
+  builders_["let"] = let_builder;
 }
 
 std::vector<std::string> parseArgList(SyntaxObject *syntax) {
