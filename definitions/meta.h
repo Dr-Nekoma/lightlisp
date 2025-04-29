@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <functional>
 #include <istream>
-#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -64,7 +63,13 @@ public:
 
   llvm::Module &module();
 
-  std::map<std::string, llvm::AllocaInst *> &named_values();
+  void enterScope();
+
+  void exitScope();
+
+  void addVar(const std::string &name, llvm::AllocaInst *inst);
+
+  llvm::AllocaInst *lookUpVar(const std::string &name);
 
   std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &tagEnvs();
 
@@ -104,13 +109,15 @@ private:
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::IRBuilder<>> builder_;
   std::unique_ptr<llvm::Module> module_;
-  std::map<std::string, llvm::AllocaInst *> named_values_;
+
+  std::vector<std::unordered_map<std::string, llvm::AllocaInst *>>
+      named_values_;
+
   std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> tagEnvs_;
 
   llvm::StructType *typeDescTy_;
   llvm::StructType *valueTy_;
   llvm::PointerType *ptrTy_;
-
   llvm::StructType *consTy_;
 
   llvm::Function *mmapFn_ = nullptr;

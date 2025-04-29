@@ -52,6 +52,7 @@ CodegenContext::CodegenContext()
       /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
       llvm::ConstantInt::get(i64Ty, arenaCapacity), "arenaSize");
 
+  enterScope();
   arenaAllocValueFn_ = defineArenaAlloc();
 
   createBuiltinTypeDescs(*this);
@@ -119,6 +120,16 @@ CodegenContext::CodegenContext()
         return call;
       },
       getFn("unboxCons"), nullptr);
+
+  // FIXME nil init looks bad and not const
+  /*auto *zeroPayload = llvm::ConstantAggregateZero::get(
+      llvm::ArrayType::get(builder().getInt8Ty(), 8));
+  auto *init = llvm::ConstantStruct::get(
+      getValueTy(), {module().getNamedGlobal("type.Cons"), zeroPayload});
+  named_values_.front().emplace(
+      "nil", new llvm::GlobalVariable(module(), getValueTy(), true,
+                                      llvm::GlobalValue::InternalLinkage, init,
+                                      "nil"));*/
 }
 
 // Getter methods
@@ -128,8 +139,29 @@ llvm::IRBuilder<> &CodegenContext::builder() { return *builder_; }
 
 llvm::Module &CodegenContext::module() { return *module_; }
 
-std::map<std::string, llvm::AllocaInst *> &CodegenContext::named_values() {
-  return named_values_;
+void CodegenContext::enterScope() { named_values_.emplace_back(); }
+
+void CodegenContext::exitScope() {
+  if (named_values_.size() > 1)
+    named_values_.pop_back();
+  else
+    throw std::runtime_error("Cannot remove global scope");
+}
+
+void CodegenContext::addVar(const std::string &name, llvm::AllocaInst *inst) {
+  named_values_.back().emplace(name, inst);
+}
+
+llvm::AllocaInst *CodegenContext::lookUpVar(const std::string &name) {
+  llvm::AllocaInst *ret = nullptr;
+  for (auto env = named_values_.rbegin(); env != named_values_.rend(); ++env) {
+    auto it = env->find(name);
+    if (it != env->end()) {
+      ret = it->second;
+      break;
+    }
+  }
+  return ret;
 }
 
 std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &
@@ -192,8 +224,8 @@ llvm::Function *CodegenContext::defineArenaAlloc() {
   auto &B = builder();
   auto DL = module().getDataLayout();
 
-  auto i64Ty = llvm::Type::getInt64Ty(context());
-  auto i8Ptr = llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0);
+  auto i64Ty = llvm::Type::getInt64Ty(C);
+  auto i8Ptr = llvm::PointerType::get(llvm::Type::getInt8Ty(C), 0);
 
   auto FT = llvm::FunctionType::get(
       /*RetTy=*/i8Ptr,
@@ -226,8 +258,8 @@ llvm::Function *CodegenContext::defineArenaAlloc() {
       B.CreateInBoundsGEP(llvm::Type::getInt8Ty(C), base, offset, "cellRawPtr");
 
   // Bump the index: idx+1
-  llvm::Value *nextIdx = B.CreateAdd(
-      idx, llvm::ConstantInt::get(llvm::Type::getInt64Ty(C), 1), "idxPlus");
+  llvm::Value *nextIdx =
+      B.CreateAdd(idx, llvm::ConstantInt::get(i64Ty, 1), "idxPlus");
   B.CreateStore(nextIdx, getArenaNextGV());
 
   // No cast, this is raw allocated space

@@ -14,7 +14,7 @@ llvm::Value *Number::codegen(CodegenContext &codegenContext) {
 }
 
 llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
-  llvm::AllocaInst *V = codegenContext.named_values()[name_];
+  llvm::AllocaInst *V = codegenContext.lookUpVar(name_);
   if (!V)
     throw std::runtime_error("Unknown variable name");
 
@@ -82,7 +82,7 @@ llvm::Function *Function::codegen(CodegenContext &codegenContext) {
       llvm::BasicBlock::Create(codegenContext.context(), "entry", currentFn);
   codegenContext.builder().SetInsertPoint(BB);
 
-  codegenContext.named_values().clear();
+  codegenContext.enterScope();
   for (auto &Arg : currentFn->args()) {
     llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(
         codegenContext, currentFn, codegenContext.getPtrType(),
@@ -91,11 +91,13 @@ llvm::Function *Function::codegen(CodegenContext &codegenContext) {
     codegenContext.builder().CreateStore(&Arg, Alloca);
 
     // 3) register it in the symbol table
-    codegenContext.named_values()[std::string(Arg.getName())] = Alloca;
+    codegenContext.addVar(std::string(Arg.getName()), Alloca);
   }
 
   if (llvm::Value *RetVal = body_->codegen(codegenContext)) {
     codegenContext.builder().CreateRet(RetVal);
+
+    codegenContext.exitScope();
 
     llvm::verifyFunction(*currentFn);
 
@@ -104,6 +106,7 @@ llvm::Function *Function::codegen(CodegenContext &codegenContext) {
     return currentFn;
   }
 
+  codegenContext.exitScope();
   // Error reading body, remove function.
   currentFn->eraseFromParent();
   return nullptr;
@@ -125,7 +128,7 @@ llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
       return nullptr;
 
     // Look up the name.
-    llvm::Value *Variable = codegenContext.named_values()[LHSE->getName()];
+    llvm::Value *Variable = codegenContext.lookUpVar(LHSE->getName());
     if (!Variable)
       throw std::runtime_error("Unknown variable name");
 
@@ -260,8 +263,6 @@ llvm::Value *Go::codegen(CodegenContext &codegenContext) {
 }
 
 llvm::Value *Let::codegen(CodegenContext &codegenContext) {
-  llvm::AllocaInst *oldBindings;
-
   llvm::Function *currentFn =
       codegenContext.builder().GetInsertBlock()->getParent();
 
@@ -279,10 +280,10 @@ llvm::Value *Let::codegen(CodegenContext &codegenContext) {
 
   // Remember the old variable binding so that we can restore the binding when
   // we unrecurse.
-  oldBindings = codegenContext.named_values()[name_];
+  codegenContext.enterScope();
 
   // Remember this binding.
-  codegenContext.named_values()[name_] = Alloca;
+  codegenContext.addVar(name_, Alloca);
 
   // Codegen the body, now that all vars are in scope.
   llvm::Value *BodyVal = body_->codegen(codegenContext);
@@ -290,7 +291,7 @@ llvm::Value *Let::codegen(CodegenContext &codegenContext) {
     return nullptr;
 
   // Pop our variable from scope.
-  codegenContext.named_values()[name_] = oldBindings;
+  codegenContext.exitScope();
 
   // Return the body computation.
   return BodyVal;
