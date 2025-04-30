@@ -3,6 +3,7 @@ add_library(definitions STATIC
   meta.cpp
   types.cpp
   prepare.cpp
+  memory.cpp
 )
 
 target_include_directories(definitions

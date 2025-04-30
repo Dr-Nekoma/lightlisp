@@ -3,23 +3,18 @@
 #include "ir1lisp.h"
 #include "meta.h"
 #include "objects.h"
-#include "types.h"
 #include "util.h"
-
-void prepareArena(CodegenContext &codegenContext);
 
 llvm::Value *prepareCMain(CodegenContext &codegenContext,
                           llvm::Function *lispMain);
-
-void munmapArena(CodegenContext &codegenContext);
 
 template <unsigned Arity, typename Op>
 llvm::Function *emitBuiltIn(CodegenContext &codegenContext,
                             llvm::StringRef fnName, Op opFn,
                             llvm::Function *unboxFn, llvm::Function *boxFn) {
-  auto &M = codegenContext.module();
-  auto &C = codegenContext.context();
-  auto ptrTy = codegenContext.getPtrType();
+  auto &M = codegenContext.context.module;
+  auto &C = codegenContext.context.context;
+  auto ptrTy = codegenContext.type_manager.getPtrType();
   // Build FunctionType: (ptr,ptr,… Arity times) -> ptr
   llvm::SmallVector<llvm::Type *, Arity> params(Arity, ptrTy);
   auto FT = llvm::FunctionType::get(ptrTy, params, /*isVarArg=*/false);

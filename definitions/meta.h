@@ -32,8 +32,6 @@
 
 #include <llvm/IR/Verifier.h>
 
-#include "types.h"
-
 class Object;
 // class Scope;
 class Number;  // constant
@@ -52,83 +50,122 @@ using SyntaxObject = std::variant<Number, Symbol, Cell>;
 
 using IntOpFn = std::function<llvm::Value *(llvm::IRBuilder<> &, llvm::Value *,
                                             llvm::Value *)>;
-class CodegenContext {
-public:
+struct CodegenContext {
   CodegenContext();
 
-  // Getter methods
-  llvm::LLVMContext &context();
+  struct IRGenContext {
+    IRGenContext();
 
-  llvm::IRBuilder<> &builder();
+    llvm::LLVMContext context;
+    llvm::IRBuilder<> builder;
+    llvm::Module module;
+  };
 
-  llvm::Module &module();
+  class SymbolTable {
+  public:
+    SymbolTable(CodegenContext &codegenContext);
 
-  void enterScope();
+    void enterScope();
 
-  void exitScope();
+    void exitScope();
 
-  void addVar(const std::string &name, llvm::AllocaInst *inst);
+    bool isTopLevel();
 
-  llvm::AllocaInst *lookUpVar(const std::string &name);
+    llvm::Function *getFn(const std::string &name);
 
-  std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &tagEnvs();
+    void addVar(const std::string &name, llvm::AllocaInst *inst);
 
-  llvm::StructType *getTypeDescTy();
+    llvm::AllocaInst *lookUpVar(const std::string &name);
 
-  llvm::StructType *getValueTy();
+    std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &tagEnvs();
 
-  llvm::PointerType *getPtrType();
+    std::unordered_map<std::string, llvm::BasicBlock *> &lastTagEnv();
 
-  llvm::Function *getmmapFn();
+    llvm::Function *getTrapFn();
 
-  llvm::Function *getmunmapFn();
+  private:
+    llvm::Function *trapFn_;
 
-  llvm::Function *getTrapFn();
+    std::unordered_map<std::string, llvm::GlobalVariable *> constantGlobals_;
 
-  llvm::Function *getArenaAllocator();
+    std::unordered_map<std::string, llvm::Function *> builtInFns_;
 
-  llvm::GlobalVariable *getArenaPtrGV();
+    std::vector<std::unordered_map<std::string, llvm::AllocaInst *>>
+        named_values_;
 
-  llvm::GlobalVariable *getArenaNextGV();
+    std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> tagEnvs_;
 
-  llvm::GlobalVariable *getArenaSizeGV();
+    CodegenContext *parent_;
+  };
 
-  std::unordered_map<std::string, llvm::BasicBlock *> &lastTagEnv();
+  class Memorymanager {
+  public:
+    Memorymanager(IRGenContext &irgc);
 
-  llvm::Function *getFn(const std::string &name);
+    void prepareArena(IRGenContext &irgc);
 
-  void addType(const std::string &name, llvm::GlobalVariable *type);
+    void munmapArena(IRGenContext &irgc);
 
-  llvm::GlobalVariable *getType(const std::string &name);
+    llvm::Function *getmmapFn();
 
-  llvm::StructType *getConsTy();
+    llvm::Function *getmunmapFn();
 
-private:
-  llvm::Function *defineArenaAlloc();
+    llvm::Function *getTrapFn();
 
-  std::unique_ptr<llvm::LLVMContext> context_;
-  std::unique_ptr<llvm::IRBuilder<>> builder_;
-  std::unique_ptr<llvm::Module> module_;
+    llvm::Function *getArenaAllocator();
 
-  std::vector<std::unordered_map<std::string, llvm::AllocaInst *>>
-      named_values_;
+    llvm::GlobalVariable *getArenaPtrGV();
 
-  std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> tagEnvs_;
+    llvm::GlobalVariable *getArenaNextGV();
 
-  llvm::StructType *typeDescTy_;
-  llvm::StructType *valueTy_;
-  llvm::PointerType *ptrTy_;
-  llvm::StructType *consTy_;
+    llvm::GlobalVariable *getArenaSizeGV();
 
-  llvm::Function *mmapFn_ = nullptr;
-  llvm::Function *munmapFn_ = nullptr;
-  llvm::Function *trapFn_ = nullptr;
-  llvm::GlobalVariable *arenaPtrGV_ = nullptr;
-  llvm::GlobalVariable *arenaNextGV_ = nullptr;
-  llvm::GlobalVariable *arenaSizeGV_ = nullptr;
-  llvm::Function *arenaAllocValueFn_ = nullptr;
+  private:
+    llvm::Function *defineArenaAlloc(IRGenContext &irgc);
 
-  std::unordered_map<std::string, llvm::Function *> builtInFns_;
+    llvm::Function *mmapFn_;
+    llvm::Function *munmapFn_;
+    llvm::GlobalVariable *arenaPtrGV_;
+    llvm::GlobalVariable *arenaNextGV_;
+    llvm::GlobalVariable *arenaSizeGV_;
+    llvm::Function *arenaAllocValueFn_;
+  };
 
-  std::unordered_map<std::string, llvm::GlobalVariable *> builtInTypes_;
+  class TypeRegistry {
+  public:
+    TypeRegistry(IRGenContext &irgc);
+
+    llvm::GlobalVariable *getType(const std::string &name);
+
+    llvm::StructType *getConsTy();
+
+    llvm::StructType *getTypeDescTy();
+
+    llvm::StructType *getValueTy();
+
+    llvm::PointerType *getPtrType();
+
+    llvm::GlobalVariable *createBuiltinTypeDescVar(IRGenContext &irgc,
+                                                   llvm::StringRef name,
+                                                   int kind);
+
+  private:
+    llvm::StructType *makeTypeDescType(IRGenContext &irgc);
+
+    llvm::StructType *makeValueType(IRGenContext &irgc,
+                                    llvm::StructType *TypeDescTy);
+
+    llvm::StructType *makeConsType(IRGenContext &irgc);
+
+    llvm::StructType *typeDescTy_;
+    llvm::StructType *valueTy_;
+    llvm::PointerType *ptrTy_;
+    llvm::StructType *consTy_;
+    std::unordered_map<std::string, llvm::GlobalVariable *> builtInTypes_;
+  };
+
+  IRGenContext context;
+  Memorymanager memory_manager;
+  TypeRegistry type_manager;
+  SymbolTable lexenv;
 };

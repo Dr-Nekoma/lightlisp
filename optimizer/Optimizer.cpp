@@ -38,8 +38,9 @@ llvm::PassInstrumentationCallbacks &Optimizer::getPIC() {
 llvm::StandardInstrumentations &
 Optimizer::getSI(CodegenContext &codegenContext) {
   static std::unique_ptr<llvm::StandardInstrumentations> SI =
-      std::make_unique<llvm::StandardInstrumentations>(codegenContext.context(),
-                                                       /*DebugLogging*/ true);
+      std::make_unique<llvm::StandardInstrumentations>(
+          codegenContext.context.context,
+          /*DebugLogging*/ true);
   return *SI;
 }
 

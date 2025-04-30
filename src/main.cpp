@@ -35,8 +35,9 @@ int genObjectFile(CodegenContext &codegenContext) {
   auto TargetMachine = Target->createTargetMachine(TargetTriple, CPU, Features,
                                                    opt, llvm::Reloc::PIC_);
 
-  codegenContext.module().setDataLayout(TargetMachine->createDataLayout());
-  codegenContext.module().setTargetTriple(TargetTriple);
+  codegenContext.context.module.setDataLayout(
+      TargetMachine->createDataLayout());
+  codegenContext.context.module.setTargetTriple(TargetTriple);
 
   auto Filename = "lisp.o";
   std::error_code EC;
@@ -55,7 +56,7 @@ int genObjectFile(CodegenContext &codegenContext) {
     return 1;
   }
 
-  pass.run(codegenContext.module());
+  pass.run(codegenContext.context.module);
   dest.flush();
   return 0;
 }
@@ -119,14 +120,14 @@ int main(int argc, char **argv) { // Needs cleanup
   std::vector<std::unique_ptr<Function>> functions =
       prepareTopLevelFns(codegenContext, std::move(parser));
 
-  auto lispMain = codegenContext.module().getFunction("main");
+  auto lispMain = codegenContext.context.module.getFunction("main");
   if (!lispMain)
     throw std::runtime_error("`main` function not found in Lisp code");
   lispMain->setName("lisp_main");
   {
-    auto &C = codegenContext.context();
-    auto &builder = codegenContext.builder();
-    auto &M = codegenContext.module();
+    auto &C = codegenContext.context.context;
+    auto &builder = codegenContext.context.builder;
+    auto &M = codegenContext.context.module;
 
     // 1) Make the Function and its prototype
     auto FT = llvm::FunctionType::get(builder.getInt32Ty(), {}, false);
@@ -139,7 +140,7 @@ int main(int argc, char **argv) { // Needs cleanup
     auto exitBB = llvm::BasicBlock::Create(C, "exit", wrapper);
     // ——— ENTRY block — mmap and jump to body ———
     builder.SetInsertPoint(entryBB);
-    prepareArena(codegenContext);
+    codegenContext.memory_manager.prepareArena(codegenContext.context);
 
     // jump into the body
     builder.CreateBr(bodyBB);
@@ -164,18 +165,18 @@ int main(int argc, char **argv) { // Needs cleanup
     // store+load)
 
     // munmap(arenaBase, arenaSize)
-    munmapArena(codegenContext);
+    codegenContext.memory_manager.munmapArena(codegenContext.context);
 
     // finally return the i32
     builder.CreateRet(ret32 /* or reload from alloca */);
   }
 
-  for (auto &F : codegenContext.module()) {
+  for (auto &F : codegenContext.context.module) {
     llvm::verifyFunction(F);
   }
 
-  if (verifyModule(codegenContext.module(), &llvm::errs())) {
-    codegenContext.module().print(llvm::errs(), nullptr);
+  if (verifyModule(codegenContext.context.module, &llvm::errs())) {
+    codegenContext.context.module.print(llvm::errs(), nullptr);
   }
 
   std::error_code EC;
@@ -183,7 +184,7 @@ int main(int argc, char **argv) { // Needs cleanup
   if (EC)
     llvm::errs() << "Could not open lisp.ll for writing\n";
   else
-    codegenContext.module().print(llOut, nullptr);
+    codegenContext.context.module.print(llOut, nullptr);
 
   int err = genObjectFile(codegenContext);
   return err != 0 ? 1 : 0;

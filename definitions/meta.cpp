@@ -3,89 +3,47 @@
 #include "util.h"
 
 CodegenContext::CodegenContext()
-    : context_(std::make_unique<llvm::LLVMContext>()),
-      builder_(std::make_unique<llvm::IRBuilder<>>(*context_)),
-      module_(std::make_unique<llvm::Module>("my lisp", *context_)),
-      typeDescTy_(makeTypeDescType(*this)),
-      valueTy_(makeValueType(*this, typeDescTy_)),
-      ptrTy_(llvm::PointerType::getUnqual(valueTy_)),
-      consTy_(makeConsType(*this)), trapFn_(llvm::Intrinsic::getDeclaration(
-                                        &module(), llvm::Intrinsic::trap)) {
+    : context(), memory_manager(context), type_manager(context), lexenv(*this) {
+}
 
-  auto i8Ptr = llvm::PointerType::get(llvm::IntegerType::get(context(), 8), 0);
-  auto i64Ty = llvm::Type::getInt64Ty(context());
-  auto i32Ty = llvm::Type::getInt32Ty(context());
+CodegenContext::IRGenContext::IRGenContext()
+    : context(llvm::LLVMContext()), builder(llvm::IRBuilder<>(context)),
+      module(llvm::Module("my lisp", context)) {}
 
-  // void* mmap(void*, size_t, int, int, int, off_t);
-  // on Linux off_t is 64-bit:
-  std::vector<llvm::Type *> mmapArgs = {
-      i8Ptr, // addr
-      i64Ty, // length
-      i32Ty, // prot
-      i32Ty, // flags
-      i32Ty, // fd
-      i64Ty  // offset
-  };
-  auto mmapFT = llvm::FunctionType::get(i8Ptr, mmapArgs, /*vararg*/ false);
-  mmapFn_ = cast<llvm::Function>(
-      module().getOrInsertFunction("mmap", mmapFT).getCallee());
+CodegenContext::SymbolTable::SymbolTable(CodegenContext &codegenContext)
+    : trapFn_(llvm::Intrinsic::getDeclaration(&codegenContext.context.module,
+                                              llvm::Intrinsic::trap)),
+      parent_(&codegenContext) {
 
-  // int munmap(void*, size_t);
-  auto munmapFT =
-      llvm::FunctionType::get(i32Ty, {i8Ptr, i64Ty}, /*vararg*/ false);
-  munmapFn_ = cast<llvm::Function>(
-      module().getOrInsertFunction("munmap", munmapFT).getCallee());
-
-  arenaPtrGV_ = new llvm::GlobalVariable(
-      module(), i8Ptr,
-      /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
-      llvm::Constant::getNullValue(i8Ptr), "arenaBase");
-
-  arenaNextGV_ = new llvm::GlobalVariable(
-      module(), i64Ty,
-      /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
-      llvm::ConstantInt::get(i64Ty, 0), "arenaNext");
-
-  uint64_t arenaCapacity = 1024 * 1024 * 8;
-  arenaSizeGV_ = new llvm::GlobalVariable(
-      module(), i64Ty,
-      /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
-      llvm::ConstantInt::get(i64Ty, arenaCapacity), "arenaSize");
-
-  enterScope();
-  arenaAllocValueFn_ = defineArenaAlloc();
-
-  createBuiltinTypeDescs(*this);
-
-  builtInFns_["panic"] = emitPanic(*this);
-  builtInFns_["boxInt"] = emitBoxInt(*this);
-  builtInFns_["unboxInt"] = emitUnBoxInt(*this);
-  builtInFns_[getBuiltInName("cons")] = emitCons(*this);
-  builtInFns_["boxCons"] = emitBoxCons(*this);
-  builtInFns_["unboxCons"] = emitUnBoxCons(*this);
-  builtInFns_[getBuiltInName("car")] = emitCar(*this);
-  builtInFns_[getBuiltInName("cdr")] = emitCdr(*this);
+  builtInFns_["panic"] = emitPanic(codegenContext);
+  builtInFns_["boxInt"] = emitBoxInt(codegenContext);
+  builtInFns_["unboxInt"] = emitUnBoxInt(codegenContext);
+  builtInFns_[getBuiltInName("cons")] = emitCons(codegenContext);
+  builtInFns_["boxCons"] = emitBoxCons(codegenContext);
+  builtInFns_["unboxCons"] = emitUnBoxCons(codegenContext);
+  builtInFns_[getBuiltInName("car")] = emitCar(codegenContext);
+  builtInFns_[getBuiltInName("cdr")] = emitCdr(codegenContext);
 
   builtInFns_["+"] = emitBuiltIn<2>(
-      *this, getBuiltInName("+"),
+      codegenContext, getBuiltInName("+"),
       [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         return builder.CreateAdd(a[0], a[1], "addtmp");
       },
       getFn("unboxInt"), getFn("boxInt"));
   builtInFns_["-"] = emitBuiltIn<2>(
-      *this, getBuiltInName("-"),
+      codegenContext, getBuiltInName("-"),
       [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         return builder.CreateSub(a[0], a[1], "subtmp");
       },
       getFn("unboxInt"), getFn("boxInt"));
   builtInFns_["*"] = emitBuiltIn<2>(
-      *this, getBuiltInName("*"),
+      codegenContext, getBuiltInName("*"),
       [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         return builder.CreateMul(a[0], a[1], "multmp");
       },
       getFn("unboxInt"), getFn("boxInt"));
   builtInFns_["<"] = emitBuiltIn<2>(
-      *this, getBuiltInName("<"),
+      codegenContext, getBuiltInName("<"),
       [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         auto boolRes = builder.CreateICmpSLT(a[0], a[1], "cmptmp");
         return builder.CreateZExt(boolRes, builder.getInt64Ty(), "booltoint");
@@ -94,14 +52,14 @@ CodegenContext::CodegenContext()
 
   builtInFns_["cons"] = emitBuiltIn<2>( // FIXME should I even cache normal
                                         // (even if predefined) functions?
-      *this, "cons",
+      codegenContext, "cons",
       [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         return builder.CreateCall(getFn(getBuiltInName("cons")), {a[0], a[1]},
                                   "cons.ret");
       },
       nullptr, getFn("boxCons"));
   builtInFns_["car"] = emitBuiltIn<1>(
-      *this, "car",
+      codegenContext, "car",
       [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         auto call =
             builder.CreateCall(getFn(getBuiltInName("car")), {a[0]}, "car.ret");
@@ -111,7 +69,7 @@ CodegenContext::CodegenContext()
       },
       getFn("unboxCons"), nullptr);
   builtInFns_["cdr"] = emitBuiltIn<1>(
-      *this, "cdr",
+      codegenContext, "cdr",
       [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         auto call =
             builder.CreateCall(getFn(getBuiltInName("cdr")), {a[0]}, "cdr.ret");
@@ -132,27 +90,17 @@ CodegenContext::CodegenContext()
                                       "nil"));*/
 }
 
-// Getter methods
-llvm::LLVMContext &CodegenContext::context() { return *context_; }
+void CodegenContext::SymbolTable::enterScope() { named_values_.emplace_back(); }
 
-llvm::IRBuilder<> &CodegenContext::builder() { return *builder_; }
+void CodegenContext::SymbolTable::exitScope() { named_values_.pop_back(); }
 
-llvm::Module &CodegenContext::module() { return *module_; }
-
-void CodegenContext::enterScope() { named_values_.emplace_back(); }
-
-void CodegenContext::exitScope() {
-  if (named_values_.size() > 1)
-    named_values_.pop_back();
-  else
-    throw std::runtime_error("Cannot remove global scope");
-}
-
-void CodegenContext::addVar(const std::string &name, llvm::AllocaInst *inst) {
+void CodegenContext::SymbolTable::addVar(const std::string &name,
+                                         llvm::AllocaInst *inst) {
   named_values_.back().emplace(name, inst);
 }
 
-llvm::AllocaInst *CodegenContext::lookUpVar(const std::string &name) {
+llvm::AllocaInst *
+CodegenContext::SymbolTable::lookUpVar(const std::string &name) {
   llvm::AllocaInst *ret = nullptr;
   for (auto env = named_values_.rbegin(); env != named_values_.rend(); ++env) {
     auto it = env->find(name);
@@ -165,107 +113,22 @@ llvm::AllocaInst *CodegenContext::lookUpVar(const std::string &name) {
 }
 
 std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &
-CodegenContext::tagEnvs() {
+CodegenContext::SymbolTable::tagEnvs() {
   return tagEnvs_;
 }
 
-llvm::StructType *CodegenContext::getTypeDescTy() { return typeDescTy_; }
-
-llvm::StructType *CodegenContext::getValueTy() { return valueTy_; }
-
-llvm::PointerType *CodegenContext::getPtrType() { return ptrTy_; }
-
-llvm::Function *CodegenContext::getmmapFn() { return mmapFn_; }
-
-llvm::Function *CodegenContext::getmunmapFn() { return munmapFn_; }
-
-llvm::Function *CodegenContext::getTrapFn() { return trapFn_; }
-
-llvm::Function *CodegenContext::getArenaAllocator() {
-  return arenaAllocValueFn_;
-}
-
-llvm::GlobalVariable *CodegenContext::getArenaPtrGV() { return arenaPtrGV_; }
-
-llvm::GlobalVariable *CodegenContext::getArenaNextGV() { return arenaNextGV_; }
-
-llvm::GlobalVariable *CodegenContext::getArenaSizeGV() { return arenaSizeGV_; }
-
-llvm::Function *CodegenContext::getFn(const std::string &name) {
+llvm::Function *CodegenContext::SymbolTable::getFn(const std::string &name) {
   if (auto it = builtInFns_.find(name); it != builtInFns_.end()) {
     return it->second;
   }
-  return module().getFunction(name);
+  return parent_->context.module.getFunction(name);
 }
-
-void CodegenContext::addType(const std::string &name,
-                             llvm::GlobalVariable *type) {
-  builtInTypes_.emplace(name, type);
-}
-
-llvm::GlobalVariable *CodegenContext::getType(const std::string &name) {
-  if (auto it = builtInTypes_.find(name); it != builtInTypes_.end()) {
-    return it->second;
-  }
-  return nullptr;
-}
-
-llvm::StructType *CodegenContext::getConsTy() { return consTy_; }
 
 std::unordered_map<std::string, llvm::BasicBlock *> &
-CodegenContext::lastTagEnv() {
+CodegenContext::SymbolTable::lastTagEnv() {
   if (tagEnvs_.empty())
     throw std::runtime_error("Go outside of tagbody");
   return tagEnvs_.back();
 }
 
-llvm::Function *CodegenContext::defineArenaAlloc() {
-  auto &C = context();
-  auto &B = builder();
-  auto DL = module().getDataLayout();
-
-  auto i64Ty = llvm::Type::getInt64Ty(C);
-  auto i8Ptr = llvm::PointerType::get(llvm::Type::getInt8Ty(C), 0);
-
-  auto FT = llvm::FunctionType::get(
-      /*RetTy=*/i8Ptr,
-      /*Params=*/{i64Ty},
-      /*isVarArg=*/false);
-  auto allocator = llvm::Function::Create(FT, llvm::Function::InternalLinkage,
-                                          "arenaAllocValue", module());
-
-  auto it = allocator->arg_begin();
-  it->setName("size");
-
-  llvm::BasicBlock *entry = llvm::BasicBlock::Create(C, "entry", allocator);
-  B.SetInsertPoint(entry);
-
-  // Load the current index
-  llvm::Value *idx =
-      B.CreateLoad(getArenaNextGV()->getValueType(), getArenaNextGV(), "idx");
-
-  // Compute the byte-offset = idx * size
-  auto size = &*it;
-  llvm::Value *offset = B.CreateMul(idx, size, "offsetBytes");
-
-  // Load the base pointer (i8*)
-  llvm::Value *base =
-      B.CreateLoad(getArenaPtrGV()->getValueType(), getArenaPtrGV(), "base");
-
-  // Compute raw cell ptr = base + offset
-  //    (getelementptr i8, i8* base, i64 offset)
-  llvm::Value *rawCellPtr =
-      B.CreateInBoundsGEP(llvm::Type::getInt8Ty(C), base, offset, "cellRawPtr");
-
-  // Bump the index: idx+1
-  llvm::Value *nextIdx =
-      B.CreateAdd(idx, llvm::ConstantInt::get(i64Ty, 1), "idxPlus");
-  B.CreateStore(nextIdx, getArenaNextGV());
-
-  // No cast, this is raw allocated space
-  B.CreateRet(rawCellPtr);
-
-  return allocator;
-
-  // (Optionally, could add a bounds‐check before step 4 and trap if
-}
+llvm::Function *CodegenContext::SymbolTable::getTrapFn() { return trapFn_; }
