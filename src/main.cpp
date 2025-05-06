@@ -77,7 +77,6 @@ prepareTopLevelFns(CodegenContext &codegenContext, Parser &&parser) {
           "Only function definitions allowed at top level");
 
     functions.emplace_back(std::make_unique<Function>(std::move(*fnAST)));
-    llvm::errs() << functions.back()->getProto().getName() << '\n';
   }
 
   for (auto &Fptr : functions) {
@@ -119,8 +118,8 @@ int main(int argc, char **argv) { // Needs cleanup
 
   std::vector<std::unique_ptr<Function>> functions =
       prepareTopLevelFns(codegenContext, std::move(parser));
-
-  auto lispMain = codegenContext.context.module.getFunction("main");
+  codegenContext.lexenv.initGlobalCtors();
+  /*auto lispMain = codegenContext.context.module.getFunction("main");
   if (!lispMain)
     throw std::runtime_error("`main` function not found in Lisp code");
   lispMain->setName("lisp_main");
@@ -168,8 +167,8 @@ int main(int argc, char **argv) { // Needs cleanup
     codegenContext.memory_manager.munmapArena(codegenContext.context);
 
     // finally return the i32
-    builder.CreateRet(ret32 /* or reload from alloca */);
-  }
+    builder.CreateRet(ret32  );
+  }*/
 
   for (auto &F : codegenContext.context.module) {
     llvm::verifyFunction(F);

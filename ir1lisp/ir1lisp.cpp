@@ -33,12 +33,8 @@ ObjectBuilder::ObjectBuilder() {
       auto argVec = parseArgList(cell->get<0>().get());
       it++;
       auto body = codeWalk(builder, *it);
-      if (body) {
-        auto Proto = std::make_unique<Prototype>(name, argVec);
-        return std::make_unique<Function>(std::move(Proto), std::move(body));
-      } else {
-        return std::make_unique<Prototype>(name, std::move(argVec));
-      }
+      return std::make_unique<Function>(std::move(name), std::move(argVec),
+                                        std::move(body));
     } else {
       throw std::runtime_error("Arg list is not a list");
     }

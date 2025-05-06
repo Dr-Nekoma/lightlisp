@@ -52,7 +52,7 @@ CodegenContext::Memorymanager::defineArenaAlloc(IRGenContext &irgc) {
   auto DL = irgc.module.getDataLayout();
 
   auto i64Ty = llvm::Type::getInt64Ty(C);
-  auto i8Ptr = llvm::PointerType::get(llvm::Type::getInt8Ty(C), 0);
+  auto i8Ptr = llvm::PointerType::get(C, 0);
 
   auto FT = llvm::FunctionType::get(
       /*RetTy=*/i8Ptr,

@@ -68,3 +68,5 @@ llvm::Function *emitCdr(CodegenContext &codegenContext);
 llvm::Function *emitBoxCons(CodegenContext &codegenContext);
 
 llvm::Function *emitUnBoxCons(CodegenContext &codegenContext);
+
+llvm::Function *emitUnBoxFn(CodegenContext &codegenContext);

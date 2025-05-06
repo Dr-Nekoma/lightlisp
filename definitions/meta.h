@@ -15,22 +15,8 @@
 #include <variant>
 #include <vector>
 
-#include "llvm/ADT/APFloat.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Type.h"
-
-#include "llvm/Support/TargetSelect.h"
-#include "llvm/Target/TargetMachine.h"
-
-#include <llvm/IR/Verifier.h>
+#include "llvmincludes.h"
+#include "util.h"
 
 class Object;
 // class Scope;
@@ -47,6 +33,8 @@ class SpecialForm;
 // class SyntaxError;
 
 using SyntaxObject = std::variant<Number, Symbol, Cell>;
+
+using ObjPtr = std::unique_ptr<Object>;
 
 using IntOpFn = std::function<llvm::Value *(llvm::IRBuilder<> &, llvm::Value *,
                                             llvm::Value *)>;
@@ -71,11 +59,21 @@ struct CodegenContext {
 
     bool isTopLevel();
 
-    llvm::Function *getFn(const std::string &name);
+    llvm::Function *getBuiltInFn(const std::string &name);
 
     void addVar(const std::string &name, llvm::AllocaInst *inst);
 
-    llvm::AllocaInst *lookUpVar(const std::string &name);
+    void addVar(const std::string &name, llvm::GlobalVariable *inst);
+
+    void addFreeVar(const std::string &name, llvm::AllocaInst *var);
+
+    std::vector<std::pair<std::string, llvm::AllocaInst *>> popFreeVars();
+
+    std::pair<VarInst, bool> lookUpVar(const std::string &name);
+
+    size_t freeVarsSize();
+
+    llvm::Value *getCurrentEnv();
 
     std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &tagEnvs();
 
@@ -83,7 +81,27 @@ struct CodegenContext {
 
     llvm::Function *getTrapFn();
 
+    void addPendingClosure(llvm::Function *fnPtr, const std::string &fnName,
+                           std::vector<llvm::AllocaInst *> &&freeVars,
+                           size_t arity);
+
+    void emitPendingClosure(llvm::GlobalVariable *global, size_t idx);
+
+    void initGlobalCtors();
+
   private:
+    struct PendingClosures {
+      PendingClosures(CodegenContext &codegenContext, llvm::Function *fnPtr,
+                      const std::string &fnName,
+                      std::vector<llvm::AllocaInst *> &&freeVars, size_t arity);
+
+      llvm::Function *fnPtr_;
+      std::string fnName_;
+      std::vector<llvm::AllocaInst *> freeVars_;
+      size_t arity_;
+      llvm::GlobalVariable *fnGlobal_;
+    };
+
     llvm::Function *trapFn_;
 
     std::unordered_map<std::string, llvm::GlobalVariable *> constantGlobals_;
@@ -93,7 +111,16 @@ struct CodegenContext {
     std::vector<std::unordered_map<std::string, llvm::AllocaInst *>>
         named_values_;
 
+    std::unordered_map<std::string, llvm::GlobalVariable *> globals_;
+
     std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> tagEnvs_;
+
+    std::vector<std::vector<std::pair<std::string, llvm::AllocaInst *>>>
+        freeVars_;
+
+    std::vector<llvm::Value *> envStack_;
+
+    std::vector<PendingClosures> pendingClosures_;
 
     CodegenContext *parent_;
   };
@@ -145,6 +172,10 @@ struct CodegenContext {
 
     llvm::PointerType *getPtrType();
 
+    llvm::StructType *getEnvTy();
+
+    llvm::StructType *getClosureTy();
+
     llvm::GlobalVariable *createBuiltinTypeDescVar(IRGenContext &irgc,
                                                    llvm::StringRef name,
                                                    int kind);
@@ -157,10 +188,16 @@ struct CodegenContext {
 
     llvm::StructType *makeConsType(IRGenContext &irgc);
 
+    llvm::StructType *makeEnvType(IRGenContext &irgc);
+
+    llvm::StructType *makeClosureType(IRGenContext &irgc);
+
     llvm::StructType *typeDescTy_;
     llvm::StructType *valueTy_;
     llvm::PointerType *ptrTy_;
     llvm::StructType *consTy_;
+    llvm::StructType *envTy_;
+    llvm::StructType *closureTy_;
     std::unordered_map<std::string, llvm::GlobalVariable *> builtInTypes_;
   };
 
@@ -169,3 +206,6 @@ struct CodegenContext {
   TypeRegistry type_manager;
   SymbolTable lexenv;
 };
+
+llvm::Value *createClosurecall(CodegenContext &codegenContext,
+                               llvm::Value *inst, std::vector<ObjPtr> &args);

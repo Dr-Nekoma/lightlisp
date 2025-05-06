@@ -3,9 +3,11 @@
 CodegenContext::TypeRegistry::TypeRegistry(IRGenContext &irgc)
     : typeDescTy_(makeTypeDescType(irgc)),
       valueTy_(makeValueType(irgc, typeDescTy_)),
-      ptrTy_(llvm::PointerType::getUnqual(valueTy_)),
-      consTy_(makeConsType(irgc)) {
+      ptrTy_(llvm::PointerType::get(irgc.context, 0)),
+      consTy_(makeConsType(irgc)), envTy_(makeEnvType(irgc)),
+      closureTy_(makeClosureType(irgc)) {
 
+  createBuiltinTypeDescVar(irgc, "Fn", -1);
   createBuiltinTypeDescVar(irgc, "Int", 0);
   createBuiltinTypeDescVar(irgc, "Cons", 1);
 }
@@ -34,6 +36,32 @@ llvm::StructType *
 CodegenContext::TypeRegistry::makeConsType(IRGenContext &irgc) {
   auto valueTy = getValueTy();
   return llvm::StructType::create(irgc.context, {valueTy, valueTy}, "Cons");
+}
+
+llvm::StructType *
+CodegenContext::TypeRegistry::makeEnvType(IRGenContext &irgc) {
+  auto &context = irgc.context;
+
+  auto envTy = llvm::StructType::create(context, "Env");
+  // auto envPtr = llvm::PointerType::getUnqual(envTy);
+  auto i64Ty = llvm::Type::getInt64Ty(context);
+
+  envTy->setBody({i64Ty, llvm::PointerType::getUnqual(getPtrType())}, false);
+
+  return envTy;
+}
+
+llvm::StructType *
+CodegenContext::TypeRegistry::makeClosureType(IRGenContext &irgc) {
+  auto &context = irgc.context;
+
+  auto ptr = llvm::PointerType::get(context, 0);
+  auto i32Ty = llvm::Type::getInt32Ty(context);
+
+  auto closureTy = llvm::StructType::create(context, "Closure");
+
+  closureTy->setBody({ptr, ptr, i32Ty});
+  return closureTy;
 }
 
 llvm::GlobalVariable *CodegenContext::TypeRegistry::createBuiltinTypeDescVar(
@@ -81,3 +109,9 @@ llvm::StructType *CodegenContext::TypeRegistry::getValueTy() {
 }
 
 llvm::PointerType *CodegenContext::TypeRegistry::getPtrType() { return ptrTy_; }
+
+llvm::StructType *CodegenContext::TypeRegistry::getEnvTy() { return envTy_; }
+
+llvm::StructType *CodegenContext::TypeRegistry::getClosureTy() {
+  return closureTy_;
+}

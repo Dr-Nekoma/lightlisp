@@ -1,5 +1,6 @@
 #pragma once
 #include "meta.h"
+#include "util.h"
 
 class Object {
 public:
@@ -7,8 +8,6 @@ public:
 
   virtual llvm::Value *codegen(CodegenContext &CodegenContext) = 0;
 };
-
-using ObjPtr = std::unique_ptr<Object>;
 
 class Number : public Object {
 public:
@@ -132,32 +131,32 @@ private:
 /// PrototypeAST - This class represents the "prototype" for a function,
 /// which captures its name, and its argument names (thus implicitly the number
 /// of arguments the function takes).
-class Prototype : public Object {
+/*class Prototype : public Object {
 public:
   Prototype(std::string name, std::vector<std::string> args)
       : name_(std::move(name)), args_(std::move(args)) {}
 
   [[nodiscard]] const std::string &getName() const { return name_; }
 
-  llvm::Function *codegen(CodegenContext &CodegenContext) override;
+  llvm::Value *codegen(CodegenContext &CodegenContext) override;
 
 private:
   std::string name_;
   std::vector<std::string> args_;
-};
+};*/
 
 /// FunctionAST - This class represents a function definition itself.
 class Function : public Object {
 public:
-  Function(std::unique_ptr<Prototype> proto, ObjPtr body)
-      : proto_(std::move(*proto.release())), body_(std::move(body)) {}
+  Function(std::string &&name, std::vector<std::string> &&args, ObjPtr body)
+      : name_(std::move(name)), args_(std::move(args)), body_(std::move(body)) {
+  }
 
-  llvm::Function *codegen(CodegenContext &CodegenContext) override;
-
-  Prototype &getProto() { return proto_; }
+  llvm::Value *codegen(CodegenContext &CodegenContext) override;
 
 private:
-  Prototype proto_; // TODO change this to just proto
+  std::string name_;
+  std::vector<std::string> args_;
   ObjPtr body_;
 };
 

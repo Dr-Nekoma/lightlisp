@@ -4,7 +4,7 @@ llvm::Value *prepareCMain(CodegenContext &codegenContext,
                           llvm::Function *lispMain) {
   auto &builder = codegenContext.context.builder;
   auto boxedRet = builder.CreateCall(lispMain, {}, "boxedRet");
-  llvm::Function *unboxFn = codegenContext.lexenv.getFn("unboxInt");
+  llvm::Function *unboxFn = codegenContext.lexenv.getBuiltInFn("unboxInt");
   if (!unboxFn)
     throw std::runtime_error("unboxInt not declared");
   llvm::Value *retI64 = builder.CreateCall(unboxFn, {boxedRet}, "unboxedVal");
@@ -129,7 +129,7 @@ llvm::Function *emitUnBoxInt(CodegenContext &codegenContext) {
   builder.CreateCondBr(isInt, contBB, panicBB);
 
   builder.SetInsertPoint(panicBB);
-  llvm::Function *panicFn = codegenContext.lexenv.getFn("panic");
+  llvm::Function *panicFn = codegenContext.lexenv.getBuiltInFn("panic");
 
   builder.CreateCall(panicFn, {});
 
@@ -158,7 +158,7 @@ llvm::Function *emitCons(CodegenContext &codegenContext) {
       llvm::FunctionType::get(consPtrTy, {valuePtrTy, valuePtrTy},
                               /*vararg=*/false);
   llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, "__internal_op_cons",
+      FT, llvm::Function::InternalLinkage, getBuiltInName("cons"),
       codegenContext.context.module);
 
   F->addFnAttr(llvm::Attribute::AlwaysInline);
@@ -203,7 +203,7 @@ llvm::Function *emitCar(CodegenContext &codegenContext) {
   llvm::FunctionType *FT = llvm::FunctionType::get(valuePtrTy, {consPtrTy},
                                                    /*vararg=*/false);
   llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, "__internal_op_car",
+      FT, llvm::Function::InternalLinkage, getBuiltInName("car"),
       codegenContext.context.module);
 
   F->addFnAttr(llvm::Attribute::AlwaysInline);
@@ -235,7 +235,7 @@ llvm::Function *emitCdr(CodegenContext &codegenContext) {
   llvm::FunctionType *FT = llvm::FunctionType::get(valuePtrTy, {consPtrTy},
                                                    /*vararg=*/false);
   llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, "__internal_op_cdr",
+      FT, llvm::Function::InternalLinkage, getBuiltInName("cdr"),
       codegenContext.context.module);
 
   F->addFnAttr(llvm::Attribute::AlwaysInline);
@@ -347,7 +347,7 @@ llvm::Function *emitUnBoxCons(CodegenContext &codegenContext) {
   builder.CreateCondBr(isCons, contBB, panicBB);
 
   builder.SetInsertPoint(panicBB);
-  llvm::Function *panicFn = codegenContext.lexenv.getFn("panic");
+  llvm::Function *panicFn = codegenContext.lexenv.getBuiltInFn("panic");
 
   builder.CreateCall(panicFn, {});
 
@@ -363,6 +363,66 @@ llvm::Function *emitUnBoxCons(CodegenContext &codegenContext) {
       builder.CreateLoad(consTyPtr, valConsPtr, "val.unboxed");
 
   builder.CreateRet(valCons);
+
+  return F;
+}
+
+llvm::Function *emitUnBoxFn(CodegenContext &codegenContext) {
+  llvm::StructType *valueTy = codegenContext.type_manager.getValueTy();
+  auto &builder = codegenContext.context.builder;
+  auto i32Ty = builder.getInt32Ty();
+
+  llvm::FunctionType *FT = llvm::FunctionType::get(
+      codegenContext.type_manager.getPtrType(),
+      {codegenContext.type_manager.getPtrType()}, /*vararg=*/false);
+  llvm::Function *F =
+      llvm::Function::Create(FT, llvm::Function::InternalLinkage, "unboxFn",
+                             codegenContext.context.module);
+
+  F->addFnAttr(llvm::Attribute::AlwaysInline);
+  F->arg_begin()->setName("x");
+
+  llvm::BasicBlock *BB =
+      llvm::BasicBlock::Create(codegenContext.context.context, "entry", F);
+
+  builder.SetInsertPoint(BB);
+
+  auto &arg = *F->arg_begin(); // x0
+
+  auto tdGEP = builder.CreateStructGEP(valueTy, &arg, 0, "type.ptr");
+  auto tdPtr = builder.CreateLoad(
+      codegenContext.type_manager.getTypeDescTy()->getPointerTo(), tdGEP,
+      "type.description");
+
+  auto kindPtr = builder.CreateStructGEP(
+      codegenContext.type_manager.getTypeDescTy(), tdPtr, 1, "kind.ptr");
+  auto kind = builder.CreateLoad(i32Ty, kindPtr, "kind");
+
+  auto isFn = builder.CreateICmpEQ(
+      kind, llvm::ConstantInt::get(i32Ty, /*Int kind=*/-1), "cmp.isFnKind");
+
+  auto contBB = llvm::BasicBlock::Create(codegenContext.context.context,
+                                         "unbox.ok", BB->getParent());
+
+  auto panicBB = llvm::BasicBlock::Create(codegenContext.context.context,
+                                          "unbox.error", BB->getParent());
+
+  builder.CreateCondBr(isFn, contBB, panicBB);
+
+  builder.SetInsertPoint(panicBB);
+  llvm::Function *panicFn = codegenContext.lexenv.getBuiltInFn("panic");
+
+  builder.CreateCall(panicFn, {});
+
+  builder.CreateUnreachable();
+
+  builder.SetInsertPoint(contBB);
+
+  llvm::Value *valPayloadGEP =
+      builder.CreateStructGEP(valueTy, &arg, 1, "val.payload.ptr");
+  llvm::Value *valI64 = builder.CreateLoad(
+      codegenContext.type_manager.getPtrType(), valPayloadGEP, "val.unboxed");
+  builder.CreateRet(valI64);
 
   return F;
 }

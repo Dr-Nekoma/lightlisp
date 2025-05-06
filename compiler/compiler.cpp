@@ -1,11 +1,13 @@
 #include "Optimizer.h"
+#include "meta.h"
+#include "objects.h"
 #include "util.h"
 
 llvm::Value *Number::codegen(CodegenContext &codegenContext) {
   auto &B = codegenContext.context.builder;
   llvm::Value *raw = B.getInt64(value_);
 
-  llvm::Function *boxFn = codegenContext.lexenv.getFn("boxInt");
+  llvm::Function *boxFn = codegenContext.lexenv.getBuiltInFn("boxInt");
 
   auto name = "num" + std::to_string(value_);
   llvm::Value *boxed = B.CreateCall(boxFn, {raw}, name);
@@ -14,41 +16,82 @@ llvm::Value *Number::codegen(CodegenContext &codegenContext) {
 }
 
 llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
-  llvm::AllocaInst *V = codegenContext.lexenv.lookUpVar(name_);
-  if (!V)
-    throw std::runtime_error("Unknown variable name");
+  auto [var, is_local] = codegenContext.lexenv.lookUpVar(name_);
+  auto &builder = codegenContext.context.builder;
 
-  return codegenContext.context.builder.CreateLoad(V->getAllocatedType(), V,
-                                                   name_.c_str());
+  if (!var.get() && !var.getGlob())
+    throw std::runtime_error("Unknown variable name");
+  if (!is_local && !var.getGlob()) {
+    codegenContext.lexenv.addFreeVar(name_, var.get());
+
+    auto idx =
+        codegenContext.lexenv.freeVarsSize() -
+        1; // idx after I add the var, so that later when we emit the
+           // environment it would have this exact idxx for this exact variable
+    auto curEnv = codegenContext.lexenv.getCurrentEnv();
+
+    auto slotPtr = builder.CreateInBoundsGEP(
+        codegenContext.type_manager.getEnvTy(), // the Env struct type
+        curEnv,                                 // Env*
+        {
+            builder.getInt32(0),  // index into the pointer itself
+            builder.getInt32(1),  // field #1 = slots
+            builder.getInt64(idx) // element in the array
+        },
+        "env.slot.ptr");
+
+    return builder.CreateLoad(codegenContext.type_manager.getPtrType(), slotPtr,
+                              name_);
+  }
+  // if not local, instead of a load need GEP + load
+  if (auto local = var.get()) {
+    return builder.CreateLoad(local->getAllocatedType(), local, name_);
+  }
+  return var.getGlob();
 }
 
 llvm::Value *Call::codegen(CodegenContext &codegenContext) {
   // Look up the name in the global module table.
-  llvm::Function *CalleeF = codegenContext.lexenv.getFn(callee_);
-  if (!CalleeF)
-    throw std::runtime_error("Unknown function referenced");
+  llvm::Function *CalleeF = codegenContext.lexenv.getBuiltInFn(callee_);
+  if (CalleeF) {
+    // If argument mismatch error.
+    if (CalleeF->arg_size() != args_.size())
+      throw std::runtime_error("Incorrect # arguments passed");
 
-  // If argument mismatch error.
-  if (CalleeF->arg_size() != args_.size())
-    throw std::runtime_error("Incorrect # arguments passed");
+    std::vector<llvm::Value *> ArgsV;
+    for (auto &Arg : args_) {
+      ArgsV.push_back(Arg->codegen(codegenContext));
+      if (!ArgsV.back())
+        return nullptr;
+    }
 
-  std::vector<llvm::Value *> ArgsV;
-  for (auto &Arg : args_) {
-    ArgsV.push_back(Arg->codegen(codegenContext));
-    if (!ArgsV.back())
-      return nullptr;
+    auto call =
+        codegenContext.context.builder.CreateCall(CalleeF, ArgsV, "calltmp");
+    if (callee_ == "car" || callee_ == "cdr") { // FIXME this can't be good
+      call->setOnlyReadsMemory();
+    }
+
+    return call;
   }
-
-  auto call =
-      codegenContext.context.builder.CreateCall(CalleeF, ArgsV, "calltmp");
-  if (callee_ == "car" || callee_ == "cdr") { // FIXME this can't be good
-    call->setOnlyReadsMemory();
+  auto userVal = codegenContext.lexenv.lookUpVar(callee_).first;
+  if (auto local = userVal.get()) {
+    auto unboxFn =
+        codegenContext.lexenv.getBuiltInFn("unboxFn"); // Not implemented
+    auto closure = codegenContext.context.builder.CreateCall(unboxFn, {local},
+                                                             "closure.ptr");
+    return createClosurecall(codegenContext, closure, args_);
   }
-
-  return call;
+  if (auto global = userVal.getGlob()) {
+    auto unboxFn = codegenContext.lexenv.getBuiltInFn("unboxFn");
+    auto closure = codegenContext.context.builder.CreateCall(unboxFn, {global},
+                                                             "closure.ptr");
+    return createClosurecall(codegenContext, closure, args_);
+  }
+  return nullptr;
 }
 
-llvm::Function *Prototype::codegen(CodegenContext &codegenContext) {
+/*
+llvm::Value *Prototype::codegen(CodegenContext &codegenContext) {
   auto ptrType = codegenContext.type_manager.getPtrType();
   std::vector<llvm::Type *> types(args_.size(), ptrType);
   llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, types, false);
@@ -63,11 +106,11 @@ llvm::Function *Prototype::codegen(CodegenContext &codegenContext) {
     arg.setName(args_[Idx++]);
 
   return F;
-}
+}*/
 
-llvm::Function *Function::codegen(CodegenContext &codegenContext) {
+llvm::Value *Function::codegen(CodegenContext &codegenContext) {
   // First, check for an existing function from a previous 'extern' declaration.
-  llvm::Function *currentFn =
+  /*llvm::Function *currentFn =
       codegenContext.context.module.getFunction(proto_.getName());
 
   if (!currentFn)
@@ -77,23 +120,47 @@ llvm::Function *Function::codegen(CodegenContext &codegenContext) {
     return nullptr;
 
   if (!currentFn->empty())
-    throw std::runtime_error("Function cannot be redefined.");
+    throw std::runtime_error("Function cannot be redefined.");*/
+  auto ptrType = codegenContext.type_manager.getPtrType();
+  auto envTy = codegenContext.type_manager.getEnvTy();
+  auto size = args_.size();
+  std::vector<llvm::Type *> types;
+  types.reserve(1 + size);
+  types.push_back(ptrType);
+  for (size_t i = 0; i < size; ++i)
+    types.push_back(ptrType);
+  llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, types, false);
+
+  llvm::Function *F = llvm::Function::Create(
+      FT, llvm::Function::InternalLinkage, getGlobalFnName(std::string(name_)),
+      codegenContext.context.module);
+
+  // Set names for all arguments.
+  auto &arg = *F->arg_begin();
+  arg.setName("_____env");
+
+  unsigned Idx = 0;
+  auto it = F->arg_begin();
+  it++;
+  for (; it != F->arg_end(); it++)
+    it->setName(args_[Idx++]);
 
   // Create a new basic block to start insertion into.
-  llvm::BasicBlock *BB = llvm::BasicBlock::Create(
-      codegenContext.context.context, "entry", currentFn);
+  llvm::BasicBlock *BB =
+      llvm::BasicBlock::Create(codegenContext.context.context, "entry", F);
   codegenContext.context.builder.SetInsertPoint(BB);
 
   codegenContext.lexenv.enterScope();
-  for (auto &Arg : currentFn->args()) {
-    llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(
-        codegenContext, currentFn, codegenContext.type_manager.getPtrType(),
-        std::string(Arg.getName()));
+  it = F->arg_begin();
+  it++;
+  for (; it != F->arg_end(); it++) {
+    llvm::AllocaInst *Alloca =
+        CreateEntryBlockAlloca(F, codegenContext.type_manager.getPtrType(),
+                               std::string(it->getName()));
 
-    codegenContext.context.builder.CreateStore(&Arg, Alloca);
+    codegenContext.context.builder.CreateStore(&*it, Alloca);
 
-    // 3) register it in the symbol table
-    codegenContext.lexenv.addVar(std::string(Arg.getName()), Alloca);
+    codegenContext.lexenv.addVar(std::string(it->getName()), Alloca);
   }
 
   if (llvm::Value *RetVal = body_->codegen(codegenContext)) {
@@ -101,40 +168,74 @@ llvm::Function *Function::codegen(CodegenContext &codegenContext) {
 
     codegenContext.lexenv.exitScope();
 
-    llvm::verifyFunction(*currentFn);
+    llvm::verifyFunction(*F);
 
-    Optimizer::getFPM().run(*currentFn, Optimizer::getFAM());
+    Optimizer::getFPM().run(*F, Optimizer::getFAM());
+    auto freeVarsAndNames = codegenContext.lexenv.popFreeVars();
+    std::vector<llvm::AllocaInst *> freeVars;
+    freeVars.reserve((freeVarsAndNames.size()));
+    for (auto &[_, inst] : freeVarsAndNames) {
+      freeVars.push_back(inst);
+    }
 
-    return currentFn;
+    codegenContext.lexenv.addPendingClosure(F, name_, std::move(freeVars),
+                                            args_.size());
+
+    return F;
   }
 
   codegenContext.lexenv.exitScope();
   // Error reading body, remove function.
-  currentFn->eraseFromParent();
+  F->eraseFromParent();
   return nullptr;
 }
 
 llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
   // Special case '=' because we don't want to emit the LHS as an expression.
   if (name_ == "setq") {
-    // This assume we're building without RTTI because LLVM builds that way by
-    // default. If you build LLVM with RTTI this can be changed to a
-    // dynamic_cast for automatic error checking.
+
     auto LHSE = static_cast<Variable *>(fst_.get());
     if (!LHSE)
       throw std::runtime_error("destination of '=' must be a variable");
+    auto name = LHSE->getName();
+    auto [var, is_local] = codegenContext.lexenv.lookUpVar(name);
+    auto &builder = codegenContext.context.builder;
+
+    if (!var.get() && !var.getGlob())
+      throw std::runtime_error("Unknown variable name");
 
     // Codegen the RHS.
     llvm::Value *Val = snd_->codegen(codegenContext);
     if (!Val)
       return nullptr;
 
-    // Look up the name.
-    llvm::Value *Variable = codegenContext.lexenv.lookUpVar(LHSE->getName());
-    if (!Variable)
-      throw std::runtime_error("Unknown variable name");
+    if (!is_local && !var.getGlob()) {
+      codegenContext.lexenv.addFreeVar(name_, var.get());
 
-    codegenContext.context.builder.CreateStore(Val, Variable);
+      auto idx = codegenContext.lexenv.freeVarsSize() -
+                 1; // idx after I add the var, so that later when we emit the
+                    // environment it would have this exact idxx for this exact
+                    // variable
+      auto curEnv = codegenContext.lexenv.getCurrentEnv();
+
+      auto slotPtr = builder.CreateInBoundsGEP(
+          codegenContext.type_manager.getEnvTy(), // the Env struct type
+          curEnv,                                 // Env*
+          {
+              builder.getInt32(0),  // index into the pointer itself
+              builder.getInt32(1),  // field #1 = slots
+              builder.getInt64(idx) // element in the array
+          },
+          "env.slot.ptr");
+
+      builder.CreateStore(Val, slotPtr);
+    } else
+      // if not local, instead of a load need GEP + load
+      if (auto local = var.get()) {
+        builder.CreateStore(Val, local);
+      } else {
+        builder.CreateStore(Val, var.getGlob());
+      }
     return Val;
   }
   return nullptr;
@@ -149,7 +250,7 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
   if (!condBoxed)
     return nullptr;
 
-  llvm::Function *unboxFn = codegenContext.lexenv.getFn("unboxInt");
+  llvm::Function *unboxFn = codegenContext.lexenv.getBuiltInFn("unboxInt");
   auto rawCond = builder.CreateCall(unboxFn, {condBoxed}, "unboxedCond");
 
   // 3) Compare i64 != 0 → i1
@@ -202,8 +303,7 @@ llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
   auto &builder = codegenContext.context.builder;
 
   auto lastVal = CreateEntryBlockAlloca(
-      codegenContext, currentFn, codegenContext.type_manager.getPtrType(),
-      "tagbody.ret");
+      currentFn, codegenContext.type_manager.getPtrType(), "tagbody.ret");
 
   codegenContext.lexenv.tagEnvs().emplace_back();
 
@@ -277,9 +377,8 @@ llvm::Value *Let::codegen(CodegenContext &codegenContext) {
   if (!initVal)
     return nullptr;
 
-  llvm::AllocaInst *Alloca =
-      CreateEntryBlockAlloca(codegenContext, currentFn,
-                             codegenContext.type_manager.getPtrType(), name_);
+  llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(
+      currentFn, codegenContext.type_manager.getPtrType(), name_);
   codegenContext.context.builder.CreateStore(initVal, Alloca);
 
   // Remember the old variable binding so that we can restore the binding when
