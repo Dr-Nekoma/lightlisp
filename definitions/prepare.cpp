@@ -1,16 +1,18 @@
 #include "prepare.h"
 
-llvm::Value *prepareCMain(CodegenContext &codegenContext,
-                          llvm::Function *lispMain) {
+llvm::Value *prepareCMain(CodegenContext &codegenContext) {
   auto &builder = codegenContext.context.builder;
-  auto boxedRet = builder.CreateCall(lispMain, {}, "boxedRet");
+  Call mainCall("lisp_main", {});
+  auto boxedRet = mainCall.codegen(codegenContext);
   llvm::Function *unboxFn = codegenContext.lexenv.getBuiltInFn("unboxInt");
   if (!unboxFn)
     throw std::runtime_error("unboxInt not declared");
-  llvm::Value *retI64 = builder.CreateCall(unboxFn, {boxedRet}, "unboxedVal");
 
-  auto ret32 = builder.CreateTrunc(retI64, builder.getInt32Ty(), "ret32");
-  return ret32;
+  // llvm::Value *retI64 = builder.CreateCall(unboxFn, {boxedRet},
+  // "unboxedVal");
+
+  // auto ret32 = builder.CreateTrunc(retI64, builder.getInt32Ty(), "ret32");
+  return boxedRet;
 }
 
 llvm::Function *emitPanic(CodegenContext &codegenContext) {
@@ -62,6 +64,10 @@ llvm::Function *emitBoxInt(CodegenContext &codegenContext) {
   builder.SetInsertPoint(BB);
 
   auto &arg = *F->arg_begin(); // x0
+  llvm::AllocaInst *Alloca =
+      CreateEntryBlockAlloca(F, i64Ty, std::string(F->arg_begin()->getName()));
+
+  codegenContext.context.builder.CreateStore(&arg, Alloca);
 
   uint64_t typeSize =
       codegenContext.context.module.getDataLayout().getTypeAllocSize(
@@ -81,7 +87,9 @@ llvm::Function *emitBoxInt(CodegenContext &codegenContext) {
   auto payloadGEP = builder.CreateStructGEP(ValueTy, boxed, 1, "payload.ptr");
   auto i64Ptr = builder.CreateBitCast(
       payloadGEP, llvm::PointerType::get(i64Ty, 0), "payload.i64.ptr");
-  builder.CreateStore(&arg, i64Ptr);
+  auto loaded = builder.CreateLoad(i64Ty, Alloca, "loaded");
+  builder.CreateStore(loaded, i64Ptr);
+
   builder.CreateRet(boxed);
   return F;
 }
@@ -91,6 +99,9 @@ llvm::Function *emitUnBoxInt(CodegenContext &codegenContext) {
   auto &builder = codegenContext.context.builder;
   auto i64Ty = builder.getInt64Ty();
   auto i32Ty = builder.getInt32Ty();
+
+  auto ptrTy = codegenContext.type_manager.getPtrType();
+  auto tdTy = codegenContext.type_manager.getTypeDescTy();
 
   llvm::FunctionType *FT = llvm::FunctionType::get(
       i64Ty, {codegenContext.type_manager.getPtrType()}, /*vararg=*/false);
@@ -107,18 +118,14 @@ llvm::Function *emitUnBoxInt(CodegenContext &codegenContext) {
   builder.SetInsertPoint(BB);
 
   auto &arg = *F->arg_begin(); // x0
-
   auto tdGEP = builder.CreateStructGEP(valueTy, &arg, 0, "type.ptr");
-  auto tdPtr = builder.CreateLoad(
-      codegenContext.type_manager.getTypeDescTy()->getPointerTo(), tdGEP,
-      "type.description");
+  auto tdDesc = builder.CreateLoad(ptrTy, tdGEP, "type.desc");
 
-  auto kindPtr = builder.CreateStructGEP(
-      codegenContext.type_manager.getTypeDescTy(), tdPtr, 1, "kind.ptr");
+  auto kindPtr = builder.CreateStructGEP(tdTy, tdDesc, 1, "kind.ptr");
   auto kind = builder.CreateLoad(i32Ty, kindPtr, "kind");
 
   auto isInt = builder.CreateICmpEQ(
-      kind, llvm::ConstantInt::get(i32Ty, /*Int kind=*/0), "cmp.isIntKind");
+      kind, llvm::ConstantInt::get(i32Ty, /*Int kind=*/14), "cmp.isIntKind");
 
   auto contBB = llvm::BasicBlock::Create(codegenContext.context.context,
                                          "unbox.ok", BB->getParent());
@@ -307,7 +314,9 @@ llvm::Function *emitUnBoxCons(CodegenContext &codegenContext) {
   llvm::StructType *valueTy = codegenContext.type_manager.getValueTy();
   auto &builder = codegenContext.context.builder;
   auto i32Ty = builder.getInt32Ty();
-  auto consTyPtr = codegenContext.type_manager.getConsTy()->getPointerTo();
+  auto tyPtr = codegenContext.type_manager.getPtrType();
+  auto consTyPtr = tyPtr;
+  auto tdTy = codegenContext.type_manager.getTypeDescTy();
 
   llvm::FunctionType *FT = llvm::FunctionType::get(
       consTyPtr, {codegenContext.type_manager.getPtrType()}, /*vararg=*/false);
@@ -326,12 +335,8 @@ llvm::Function *emitUnBoxCons(CodegenContext &codegenContext) {
   auto &arg = *F->arg_begin(); // x0
 
   auto tdGEP = builder.CreateStructGEP(valueTy, &arg, 0, "type.ptr");
-  auto tdPtr = builder.CreateLoad(
-      codegenContext.type_manager.getTypeDescTy()->getPointerTo(), tdGEP,
-      "type.description");
-
-  auto kindPtr = builder.CreateStructGEP(
-      codegenContext.type_manager.getTypeDescTy(), tdPtr, 1, "kind.ptr");
+  auto tdDesc = builder.CreateLoad(tyPtr, tdGEP, "type.desc");
+  auto kindPtr = builder.CreateStructGEP(tdTy, tdDesc, 1, "kind.ptr");
   auto kind = builder.CreateLoad(i32Ty, kindPtr, "kind");
 
   auto isCons =
@@ -371,10 +376,11 @@ llvm::Function *emitUnBoxFn(CodegenContext &codegenContext) {
   llvm::StructType *valueTy = codegenContext.type_manager.getValueTy();
   auto &builder = codegenContext.context.builder;
   auto i32Ty = builder.getInt32Ty();
+  auto tyPtr = codegenContext.type_manager.getPtrType();
+  auto tdTy = codegenContext.type_manager.getTypeDescTy();
 
-  llvm::FunctionType *FT = llvm::FunctionType::get(
-      codegenContext.type_manager.getPtrType(),
-      {codegenContext.type_manager.getPtrType()}, /*vararg=*/false);
+  llvm::FunctionType *FT =
+      llvm::FunctionType::get(tyPtr, {tyPtr}, /*vararg=*/false);
   llvm::Function *F =
       llvm::Function::Create(FT, llvm::Function::InternalLinkage, "unboxFn",
                              codegenContext.context.module);
@@ -388,18 +394,13 @@ llvm::Function *emitUnBoxFn(CodegenContext &codegenContext) {
   builder.SetInsertPoint(BB);
 
   auto &arg = *F->arg_begin(); // x0
-
   auto tdGEP = builder.CreateStructGEP(valueTy, &arg, 0, "type.ptr");
-  auto tdPtr = builder.CreateLoad(
-      codegenContext.type_manager.getTypeDescTy()->getPointerTo(), tdGEP,
-      "type.description");
-
-  auto kindPtr = builder.CreateStructGEP(
-      codegenContext.type_manager.getTypeDescTy(), tdPtr, 1, "kind.ptr");
+  auto tdDesc = builder.CreateLoad(tyPtr, tdGEP, "type.desc");
+  auto kindPtr = builder.CreateStructGEP(tdTy, tdDesc, 1, "kind.ptr");
   auto kind = builder.CreateLoad(i32Ty, kindPtr, "kind");
 
-  auto isFn = builder.CreateICmpEQ(
-      kind, llvm::ConstantInt::get(i32Ty, /*Int kind=*/-1), "cmp.isFnKind");
+  auto isFn = builder.CreateICmpEQ(kind, llvm::ConstantInt::get(i32Ty, 27),
+                                   "cmp.isFnKind");
 
   auto contBB = llvm::BasicBlock::Create(codegenContext.context.context,
                                          "unbox.ok", BB->getParent());

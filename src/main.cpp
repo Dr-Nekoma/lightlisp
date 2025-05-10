@@ -119,10 +119,11 @@ int main(int argc, char **argv) { // Needs cleanup
   std::vector<std::unique_ptr<Function>> functions =
       prepareTopLevelFns(codegenContext, std::move(parser));
   codegenContext.lexenv.initGlobalCtors();
-  /*auto lispMain = codegenContext.context.module.getFunction("main");
-  if (!lispMain)
-    throw std::runtime_error("`main` function not found in Lisp code");
-  lispMain->setName("lisp_main");
+  codegenContext.emitCtors();
+  // auto lispMain = codegenContext.context.module.getFunction("main");
+  // if (!lispMain)
+  //  throw std::runtime_error("`main` function not found in Lisp code");
+  // lispMain->setName("lisp_main");
   {
     auto &C = codegenContext.context.context;
     auto &builder = codegenContext.context.builder;
@@ -134,21 +135,14 @@ int main(int argc, char **argv) { // Needs cleanup
         llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "main", &M);
 
     // 2) Create three blocks: entry, body, exit
-    auto entryBB = llvm::BasicBlock::Create(C, "entry", wrapper);
     auto bodyBB = llvm::BasicBlock::Create(C, "body", wrapper);
     auto exitBB = llvm::BasicBlock::Create(C, "exit", wrapper);
-    // ——— ENTRY block — mmap and jump to body ———
-    builder.SetInsertPoint(entryBB);
-    codegenContext.memory_manager.prepareArena(codegenContext.context);
-
-    // jump into the body
-    builder.CreateBr(bodyBB);
 
     // ——— BODY block — call lisp_main & branch to exit ———
     builder.SetInsertPoint(bodyBB);
     // call your generated lisp_main (returns Value*)
 
-    auto ret32 = prepareCMain(codegenContext, lispMain);
+    auto ret32 = prepareCMain(codegenContext);
 
     // stash the return code in a spill slot (or pass it via a reg)
     // for simplicity, we can branch with an i32 constant:
@@ -167,8 +161,10 @@ int main(int argc, char **argv) { // Needs cleanup
     codegenContext.memory_manager.munmapArena(codegenContext.context);
 
     // finally return the i32
-    builder.CreateRet(ret32  );
-  }*/
+    auto loaded =
+        builder.CreateLoad(builder.getInt32Ty(), codegenContext.debug);
+    builder.CreateRet(loaded);
+  }
 
   for (auto &F : codegenContext.context.module) {
     llvm::verifyFunction(F);

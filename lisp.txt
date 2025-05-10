@@ -1,14 +1,5 @@
-(def fib (n a b)
-  (tagbody
-    start
-    (if (< n 1)
-        b
-        (tagbody 
-         (setq b (+ a b))
-         (setq a (- b a))
-         (setq n (- n 1))
-         (go start)))))
-
+(def foo (a)
+  a)
 
 (def main ()
-  (fib 7 0 1))
+  (foo 13))

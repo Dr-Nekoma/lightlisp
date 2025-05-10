@@ -75,15 +75,17 @@ llvm::Value *Call::codegen(CodegenContext &codegenContext) {
   }
   auto userVal = codegenContext.lexenv.lookUpVar(callee_).first;
   if (auto local = userVal.get()) {
-    auto unboxFn =
-        codegenContext.lexenv.getBuiltInFn("unboxFn"); // Not implemented
+    auto unboxFn = codegenContext.lexenv.getBuiltInFn("unboxFn");
     auto closure = codegenContext.context.builder.CreateCall(unboxFn, {local},
                                                              "closure.ptr");
+
     return createClosurecall(codegenContext, closure, args_);
   }
   if (auto global = userVal.getGlob()) {
     auto unboxFn = codegenContext.lexenv.getBuiltInFn("unboxFn");
-    auto closure = codegenContext.context.builder.CreateCall(unboxFn, {global},
+    auto loaded = codegenContext.context.builder.CreateLoad(
+        codegenContext.type_manager.getPtrType(), global, "loaded.global");
+    auto closure = codegenContext.context.builder.CreateCall(unboxFn, {loaded},
                                                              "closure.ptr");
     return createClosurecall(codegenContext, closure, args_);
   }
@@ -153,6 +155,7 @@ llvm::Value *Function::codegen(CodegenContext &codegenContext) {
   codegenContext.lexenv.enterScope();
   it = F->arg_begin();
   it++;
+
   for (; it != F->arg_end(); it++) {
     llvm::AllocaInst *Alloca =
         CreateEntryBlockAlloca(F, codegenContext.type_manager.getPtrType(),
@@ -170,7 +173,7 @@ llvm::Value *Function::codegen(CodegenContext &codegenContext) {
 
     llvm::verifyFunction(*F);
 
-    Optimizer::getFPM().run(*F, Optimizer::getFAM());
+    // Optimizer::getFPM().run(*F, Optimizer::getFAM());
     auto freeVarsAndNames = codegenContext.lexenv.popFreeVars();
     std::vector<llvm::AllocaInst *> freeVars;
     freeVars.reserve((freeVarsAndNames.size()));

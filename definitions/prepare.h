@@ -5,8 +5,7 @@
 #include "objects.h"
 #include "util.h"
 
-llvm::Value *prepareCMain(CodegenContext &codegenContext,
-                          llvm::Function *lispMain);
+llvm::Value *prepareCMain(CodegenContext &codegenContext);
 
 template <unsigned Arity, typename Op>
 llvm::Function *emitBuiltIn(CodegenContext &codegenContext,

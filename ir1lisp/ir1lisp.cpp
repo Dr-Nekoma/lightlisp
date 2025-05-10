@@ -24,6 +24,8 @@ ObjectBuilder::ObjectBuilder() {
     std::string name;
     if (auto sym = std::get_if<Symbol>(&*it)) {
       name = sym->getName();
+      if (name == "main")
+        name = "lisp_main";
     } else {
       throw std::runtime_error("bad function name");
     }

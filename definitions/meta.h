@@ -39,6 +39,10 @@ using ObjPtr = std::unique_ptr<Object>;
 using IntOpFn = std::function<llvm::Value *(llvm::IRBuilder<> &, llvm::Value *,
                                             llvm::Value *)>;
 struct CodegenContext {
+private:
+  std::vector<llvm::Constant *> initCtors_;
+
+public:
   CodegenContext();
 
   struct IRGenContext {
@@ -85,7 +89,7 @@ struct CodegenContext {
                            std::vector<llvm::AllocaInst *> &&freeVars,
                            size_t arity);
 
-    void emitPendingClosure(llvm::GlobalVariable *global, size_t idx);
+    void emitPendingClosure(llvm::Value *global, size_t idx);
 
     void initGlobalCtors();
 
@@ -127,9 +131,9 @@ struct CodegenContext {
 
   class Memorymanager {
   public:
-    Memorymanager(IRGenContext &irgc);
+    Memorymanager(CodegenContext &codegenContext);
 
-    void prepareArena(IRGenContext &irgc);
+    void prepareArena(CodegenContext &codegenContext);
 
     void munmapArena(IRGenContext &irgc);
 
@@ -183,8 +187,7 @@ struct CodegenContext {
   private:
     llvm::StructType *makeTypeDescType(IRGenContext &irgc);
 
-    llvm::StructType *makeValueType(IRGenContext &irgc,
-                                    llvm::StructType *TypeDescTy);
+    llvm::StructType *makeValueType(IRGenContext &irgc);
 
     llvm::StructType *makeConsType(IRGenContext &irgc);
 
@@ -202,9 +205,14 @@ struct CodegenContext {
   };
 
   IRGenContext context;
+  llvm::GlobalVariable *debug;
   Memorymanager memory_manager;
   TypeRegistry type_manager;
   SymbolTable lexenv;
+
+  void addCtor(size_t priority, llvm::Function *ctor);
+
+  void emitCtors();
 };
 
 llvm::Value *createClosurecall(CodegenContext &codegenContext,

@@ -1,14 +1,13 @@
 #include "meta.h"
 
 CodegenContext::TypeRegistry::TypeRegistry(IRGenContext &irgc)
-    : typeDescTy_(makeTypeDescType(irgc)),
-      valueTy_(makeValueType(irgc, typeDescTy_)),
+    : typeDescTy_(makeTypeDescType(irgc)), valueTy_(makeValueType(irgc)),
       ptrTy_(llvm::PointerType::get(irgc.context, 0)),
       consTy_(makeConsType(irgc)), envTy_(makeEnvType(irgc)),
       closureTy_(makeClosureType(irgc)) {
 
-  createBuiltinTypeDescVar(irgc, "Fn", -1);
-  createBuiltinTypeDescVar(irgc, "Int", 0);
+  createBuiltinTypeDescVar(irgc, "Fn", 27);
+  createBuiltinTypeDescVar(irgc, "Int", 14);
   createBuiltinTypeDescVar(irgc, "Cons", 1);
 }
 
@@ -23,19 +22,18 @@ CodegenContext::TypeRegistry::makeTypeDescType(IRGenContext &irgc) {
 }
 
 llvm::StructType *
-CodegenContext::TypeRegistry::makeValueType(IRGenContext &irgc,
-                                            llvm::StructType *TypeDescTy) {
-  auto TDPtr = llvm::PointerType::get(TypeDescTy, 0);
+CodegenContext::TypeRegistry::makeValueType(IRGenContext &irgc) {
   auto payload = llvm::ArrayType::get(llvm::Type::getInt8Ty(irgc.context), 8);
   auto ValTy = llvm::StructType::create(irgc.context, "Value");
-  ValTy->setBody({TDPtr, payload}, /*isPacked=*/false);
+  ValTy->setBody({llvm::PointerType::get(irgc.context, 0), payload},
+                 /*isPacked=*/false);
   return ValTy;
 }
 
 llvm::StructType *
 CodegenContext::TypeRegistry::makeConsType(IRGenContext &irgc) {
-  auto valueTy = getValueTy();
-  return llvm::StructType::create(irgc.context, {valueTy, valueTy}, "Cons");
+  auto ptrTy = getPtrType();
+  return llvm::StructType::create(irgc.context, {ptrTy, ptrTy}, "Cons");
 }
 
 llvm::StructType *
@@ -57,10 +55,10 @@ CodegenContext::TypeRegistry::makeClosureType(IRGenContext &irgc) {
 
   auto ptr = llvm::PointerType::get(context, 0);
   auto i32Ty = llvm::Type::getInt32Ty(context);
-
+  auto envTy = getEnvTy();
   auto closureTy = llvm::StructType::create(context, "Closure");
 
-  closureTy->setBody({ptr, ptr, i32Ty});
+  closureTy->setBody({envTy, ptr, i32Ty});
   return closureTy;
 }
 
