@@ -16,7 +16,7 @@ CodegenContext::CodegenContext()
           llvm::ConstantInt::get(llvm::Type::getInt64Ty(this->context.context),
                                  157),
           "Debug2")),
-      memory_manager(*this), type_manager(context), lexenv(*this) {}
+      type_manager(*this), memory_manager(*this), lexenv(*this) {}
 
 CodegenContext::IRGenContext::IRGenContext()
     : context(llvm::LLVMContext()), builder(llvm::IRBuilder<>(context)),
@@ -191,11 +191,9 @@ CodegenContext::SymbolTable::PendingClosures::PendingClosures(
     : fnPtr_(fnPtr), fnName_(fnName), freeVars_(std::move(freeVars)),
       arity_(arity),
       fnGlobal_(new llvm::GlobalVariable(
-          codegenContext.context.module,
-          codegenContext.type_manager.getPtrType(),
+          codegenContext.context.module, codegenContext.type_manager.ptrType,
           /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
-          llvm::Constant::getNullValue(
-              codegenContext.type_manager.getPtrType()),
+          llvm::Constant::getNullValue(codegenContext.type_manager.ptrType),
           fnName_)) {}
 
 void CodegenContext::SymbolTable::addPendingClosure(
@@ -211,75 +209,70 @@ void CodegenContext::SymbolTable::emitPendingClosure(llvm::Value *global,
   auto &codegenContext = *parent_;
   auto thisClosure = pendingClosures_[idx];
 
-  auto &builder = codegenContext.context.builder;
-  auto &module = codegenContext.context.module;
+  auto &[context, builder, module] = codegenContext.context;
   auto &dataL = module.getDataLayout();
   auto freeVars = thisClosure.freeVars_;
   auto freeVarsSize = freeVars.size();
   auto F = thisClosure.fnPtr_;
   auto argSize = thisClosure.arity_;
 
-  auto closureTy = codegenContext.type_manager.getClosureTy();
+  auto closureType = codegenContext.type_manager.closureType;
 
-  auto envTy = codegenContext.type_manager.getEnvTy();
+  auto envType = codegenContext.type_manager.envType;
 
-  auto ptr = codegenContext.type_manager.getPtrType();
-  auto closureTypeSize = dataL.getTypeAllocSize(closureTy);
+  auto ptrType = codegenContext.type_manager.ptrType;
+  auto closureTypeSize = dataL.getTypeAllocSize(closureType);
 
   auto closureBoxed =
       builder.CreateCall(codegenContext.memory_manager.getArenaAllocator(),
                          {builder.getInt64(closureTypeSize)}, "closureVal");
   // no bit cast
-  auto envGEP = builder.CreateStructGEP(closureTy, closureBoxed, 0, "env.slot");
+  auto envGEP =
+      builder.CreateStructGEP(closureType, closureBoxed, 0, "env.slot");
 
-  uint64_t slotsSize =
-      freeVarsSize *
-      dataL.getTypeAllocSize(codegenContext.type_manager.getPtrType());
+  uint64_t slotsSize = freeVarsSize * dataL.getTypeAllocSize(ptrType);
 
   llvm::Value *freeVarsArray =
       builder.CreateCall(codegenContext.memory_manager.getArenaAllocator(),
                          {builder.getInt64(slotsSize)});
 
-  auto *lenGEP = builder.CreateStructGEP(envTy, envGEP, 0);
+  auto *lenGEP = builder.CreateStructGEP(envType, envGEP, 0);
   builder.CreateStore(builder.getInt64(freeVarsSize), lenGEP)
       ->setAlignment(llvm::Align(8));
   for (size_t i = 0; i < freeVarsSize; ++i) {
     auto *slotPtr =
-        builder.CreateInBoundsGEP(ptr, freeVarsArray, builder.getInt64(i));
+        builder.CreateInBoundsGEP(ptrType, freeVarsArray, builder.getInt64(i));
     builder.CreateStore(freeVars[i], slotPtr)->setAlignment(llvm::Align(8));
   }
-  auto *slotsGEP = builder.CreateStructGEP(envTy, envGEP, 1);
+  auto *slotsGEP = builder.CreateStructGEP(envType, envGEP, 1);
   builder.CreateStore(freeVarsArray, slotsGEP);
 
-  auto fnGEP = builder.CreateStructGEP(closureTy, closureBoxed, 1, "fn.slot");
+  auto fnGEP = builder.CreateStructGEP(closureType, closureBoxed, 1, "fn.slot");
   builder.CreateStore(F, fnGEP);
 
   auto argSizeGEP =
-      builder.CreateStructGEP(closureTy, closureBoxed, 2, "arg.size.slot");
+      builder.CreateStructGEP(closureType, closureBoxed, 2, "arg.size.slot");
   builder.CreateStore(builder.getInt64(argSize), argSizeGEP)
       ->setAlignment(llvm::Align(8));
 
-  auto boxed = codegenContext.type_manager.packVal(codegenContext, closureBoxed,
-                                                   Type::Fn);
+  auto boxed = codegenContext.type_manager.packVal(closureBoxed, Type::Fn);
   builder.CreateStore(boxed, global);
 }
 
 void CodegenContext::SymbolTable::initGlobalCtors() {
   auto &codegenContext = *parent_;
-  auto &builder = codegenContext.context.builder;
-  auto ptr = codegenContext.type_manager.getPtrType();
+  auto &[context, builder, module] = codegenContext.context;
+  auto ptrType = codegenContext.type_manager.ptrType;
   for (size_t i = 0; i < pendingClosures_.size(); i++) {
     auto &pending = pendingClosures_[i];
     auto globalFn = pending.fnGlobal_;
-    llvm::FunctionType *FT = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(codegenContext.context.context), {ptr},
-        /*vararg=*/false);
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context), {ptrType},
+                                /*vararg=*/false);
     llvm::Function *F = llvm::Function::Create(
-        FT, llvm::Function::InternalLinkage, "init." + pending.fnName_,
-        codegenContext.context.module);
+        FT, llvm::Function::InternalLinkage, "init." + pending.fnName_, module);
 
-    llvm::BasicBlock *BB =
-        llvm::BasicBlock::Create(codegenContext.context.context, "entry", F);
+    llvm::BasicBlock *BB = llvm::BasicBlock::Create(context, "entry", F);
 
     builder.SetInsertPoint(BB);
     emitPendingClosure(globalFn, i);
@@ -294,17 +287,17 @@ llvm::Value *createClosurecall(CodegenContext &codegenContext,
   // if (CalleeF->arg_size() != args_.size())
   //   throw std::runtime_error("Incorrect # arguments passed");
 
-  auto &builder = codegenContext.context.builder;
+  auto &[context, builder, module] = codegenContext.context;
 
-  auto closureTy = codegenContext.type_manager.getClosureTy();
-  auto ptr = codegenContext.type_manager.getPtrType();
-  auto envTy = codegenContext.type_manager.getEnvTy();
+  auto closureType = codegenContext.type_manager.closureType;
+  auto ptrType = codegenContext.type_manager.ptrType;
+  auto envType = codegenContext.type_manager.envType;
 
-  auto envGEP = builder.CreateStructGEP(closureTy, inst, 0, "envGEP");
-  auto envPtr = builder.CreateLoad(envTy, envGEP, "env");
+  auto envGEP = builder.CreateStructGEP(closureType, inst, 0, "envGEP");
+  auto envPtr = builder.CreateLoad(envType, envGEP, "env");
 
-  auto fnGEP = builder.CreateStructGEP(closureTy, inst, 1, "fnGEP");
-  auto fnPtr = builder.CreateLoad(ptr, fnGEP, "fn");
+  auto fnGEP = builder.CreateStructGEP(closureType, inst, 1, "fnGEP");
+  auto fnPtr = builder.CreateLoad(ptrType, fnGEP, "fn");
 
   std::vector<llvm::Value *> ArgsV;
   for (auto &Arg : args) {
@@ -314,14 +307,10 @@ llvm::Value *createClosurecall(CodegenContext &codegenContext,
   }
 
   // let's skip the arg check for now
-  std::vector<llvm::Type *> types;
-  types.reserve(1 + ArgsV.size());
-  types.push_back(envTy);
-  for (size_t i = 0; i < ArgsV.size(); ++i)
-    types.push_back(ptr);
   std::vector<llvm::Value *> envArgs{envPtr};
   envArgs.insert(envArgs.end(), ArgsV.begin(), ArgsV.end());
-  llvm::FunctionType *FT = llvm::FunctionType::get(ptr, types, false);
+  llvm::FunctionType *FT =
+      codegenContext.type_manager.getStdFnType(ArgsV.size());
 
   auto call = builder.CreateCall(FT, fnPtr, envArgs, "closure.res");
 
@@ -329,24 +318,22 @@ llvm::Value *createClosurecall(CodegenContext &codegenContext,
 }
 
 void CodegenContext::addCtor(size_t priority, llvm::Function *ctor) {
-  auto i32Ty = llvm::Type::getInt32Ty(context.context);
-  auto ptr = llvm::PointerType::get(context.context, 0);
-  auto elemTy = llvm::StructType::get(i32Ty, ptr, ptr);
+  auto ptrType = type_manager.ptrType;
+  auto elemType = llvm::StructType::get(type_manager.i32Type, ptrType, ptrType);
   llvm::Constant *ctorElem = llvm::ConstantStruct::get(
-      elemTy, {context.builder.getInt32(priority), ctor,
-               llvm::Constant::getNullValue(ptr)});
+      elemType, {context.builder.getInt32(priority), ctor,
+                 llvm::Constant::getNullValue(ptrType)});
   initCtors_.push_back(ctorElem);
 }
 
 void CodegenContext::emitCtors() {
-  auto ptr = type_manager.getPtrType();
-  auto i32Ty = llvm::Type::getInt32Ty(context.context);
+  auto ptrType = type_manager.ptrType;
   auto globalSize = initCtors_.size();
-  auto elemTy = llvm::StructType::get(i32Ty, ptr, ptr);
-  auto elemArrayTy = llvm::ArrayType::get(elemTy, globalSize);
+  auto elemType = llvm::StructType::get(type_manager.i32Type, ptrType, ptrType);
+  auto elemArrayType = llvm::ArrayType::get(elemType, globalSize);
 
-  auto ctorArr = llvm::ConstantArray::get(elemArrayTy, initCtors_);
-  new llvm::GlobalVariable(context.module, elemArrayTy, false,
+  auto ctorArr = llvm::ConstantArray::get(elemArrayType, initCtors_);
+  new llvm::GlobalVariable(context.module, elemArrayType, false,
                            llvm::GlobalValue::AppendingLinkage, ctorArr,
                            "llvm.global_ctors");
 }

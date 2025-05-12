@@ -4,19 +4,18 @@
 #include "util.h"
 
 llvm::Value *Number::codegen(CodegenContext &codegenContext) {
-  auto &B = codegenContext.context.builder;
-  llvm::Value *raw = B.getInt64(value_);
+  auto &[context, builder, module] = codegenContext.context;
+  llvm::Value *raw = builder.getInt64(value_);
 
   auto name = "num" + std::to_string(value_);
-  llvm::Value *boxed =
-      codegenContext.type_manager.packVal(codegenContext, raw, Type::Int);
+  llvm::Value *boxed = codegenContext.type_manager.packVal(raw, Type::Int);
 
   return boxed;
 }
 
 llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
   auto [var, is_local] = codegenContext.lexenv.lookUpVar(name_);
-  auto &builder = codegenContext.context.builder;
+  auto &[context, builder, module] = codegenContext.context;
 
   if (!var.get() && !var.getGlob())
     throw std::runtime_error("Unknown variable name");
@@ -30,8 +29,8 @@ llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
     auto curEnv = codegenContext.lexenv.getCurrentEnv();
 
     auto slotPtr = builder.CreateInBoundsGEP(
-        codegenContext.type_manager.getEnvTy(), // the Env struct type
-        curEnv,                                 // Env*
+        codegenContext.type_manager.envType, // the Env struct type
+        curEnv,                              // Env*
         {
             builder.getInt32(0),  // index into the pointer itself
             builder.getInt32(1),  // field #1 = slots
@@ -39,7 +38,7 @@ llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
         },
         "env.slot.ptr");
 
-    return builder.CreateLoad(codegenContext.type_manager.getPtrType(), slotPtr,
+    return builder.CreateLoad(codegenContext.type_manager.ptrType, slotPtr,
                               name_);
   }
   // if not local, instead of a load need GEP + load
@@ -50,6 +49,7 @@ llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
 }
 
 llvm::Value *Call::codegen(CodegenContext &codegenContext) {
+  auto &[context, builder, module] = codegenContext.context;
   // Look up the name in the global module table.
   llvm::Function *CalleeF = codegenContext.lexenv.getBuiltInFn(callee_);
   if (CalleeF) {
@@ -64,8 +64,7 @@ llvm::Value *Call::codegen(CodegenContext &codegenContext) {
         return nullptr;
     }
 
-    auto call =
-        codegenContext.context.builder.CreateCall(CalleeF, ArgsV, "calltmp");
+    auto call = builder.CreateCall(CalleeF, ArgsV, "calltmp");
     if (callee_ == "car" || callee_ == "cdr") { // FIXME this can't be good
       call->setOnlyReadsMemory();
     }
@@ -74,16 +73,14 @@ llvm::Value *Call::codegen(CodegenContext &codegenContext) {
   }
   auto userVal = codegenContext.lexenv.lookUpVar(callee_).first;
   if (auto local = userVal.get()) {
-    auto closure = codegenContext.type_manager.checkAndUnpack(codegenContext,
-                                                              local, Type::Fn);
+    auto closure = codegenContext.type_manager.checkAndUnpack(local, Type::Fn);
 
     return createClosurecall(codegenContext, closure, args_);
   }
   if (auto global = userVal.getGlob()) {
-    auto loaded = codegenContext.context.builder.CreateLoad(
-        codegenContext.type_manager.getPtrType(), global, "loaded.global");
-    auto closure = codegenContext.type_manager.checkAndUnpack(codegenContext,
-                                                              loaded, Type::Fn);
+    auto loaded = builder.CreateLoad(codegenContext.type_manager.ptrType,
+                                     global, "loaded.global");
+    auto closure = codegenContext.type_manager.checkAndUnpack(loaded, Type::Fn);
     return createClosurecall(codegenContext, closure, args_);
   }
   return nullptr;
@@ -120,20 +117,14 @@ llvm::Value *Function::codegen(CodegenContext &codegenContext) {
 
   if (!currentFn->empty())
     throw std::runtime_error("Function cannot be redefined.");*/
-  auto ptrType = codegenContext.type_manager.getPtrType();
-  auto envTy = codegenContext.type_manager.getEnvTy();
-  auto &builder = codegenContext.context.builder;
+  auto ptrType = codegenContext.type_manager.ptrType;
+  auto &[context, builder, module] = codegenContext.context;
   auto size = args_.size();
-  std::vector<llvm::Type *> types;
-  types.reserve(1 + size);
-  types.push_back(envTy);
-  for (size_t i = 0; i < size; ++i)
-    types.push_back(ptrType);
-  llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, types, false);
+  llvm::FunctionType *FT = codegenContext.type_manager.getStdFnType(size);
 
-  llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, getGlobalFnName(std::string(name_)),
-      codegenContext.context.module);
+  llvm::Function *F =
+      llvm::Function::Create(FT, llvm::Function::InternalLinkage,
+                             getGlobalFnName(std::string(name_)), module);
 
   // Set names for all arguments.
   auto &arg = *F->arg_begin();
@@ -146,8 +137,7 @@ llvm::Value *Function::codegen(CodegenContext &codegenContext) {
     it1->setName(args_[Idx++]);
 
   // Create a new basic block to start insertion into.
-  llvm::BasicBlock *BB =
-      llvm::BasicBlock::Create(codegenContext.context.context, "entry", F);
+  llvm::BasicBlock *BB = llvm::BasicBlock::Create(context, "entry", F);
   builder.SetInsertPoint(BB);
 
   codegenContext.lexenv.enterScope();
@@ -155,16 +145,15 @@ llvm::Value *Function::codegen(CodegenContext &codegenContext) {
   it++;
   for (; it != F->arg_end(); it++) {
     llvm::AllocaInst *Alloca =
-        CreateEntryBlockAlloca(F, codegenContext.type_manager.getPtrType(),
-                               std::string(it->getName()));
+        CreateEntryBlockAlloca(F, ptrType, std::string(it->getName()));
 
-    codegenContext.context.builder.CreateStore(&*it, Alloca);
+    builder.CreateStore(&*it, Alloca);
 
     codegenContext.lexenv.addVar(std::string(it->getName()), Alloca);
   }
 
   if (llvm::Value *RetVal = body_->codegen(codegenContext)) {
-    codegenContext.context.builder.CreateRet(RetVal);
+    builder.CreateRet(RetVal);
 
     codegenContext.lexenv.exitScope();
 
@@ -192,6 +181,7 @@ llvm::Value *Function::codegen(CodegenContext &codegenContext) {
 
 llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
   // Special case '=' because we don't want to emit the LHS as an expression.
+  auto &[context, builder, module] = codegenContext.context;
   if (name_ == "setq") {
 
     auto LHSE = static_cast<Variable *>(fst_.get());
@@ -199,7 +189,6 @@ llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
       throw std::runtime_error("destination of '=' must be a variable");
     auto name = LHSE->getName();
     auto [var, is_local] = codegenContext.lexenv.lookUpVar(name);
-    auto &builder = codegenContext.context.builder;
 
     if (!var.get() && !var.getGlob())
       throw std::runtime_error("Unknown variable name");
@@ -219,8 +208,8 @@ llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
       auto curEnv = codegenContext.lexenv.getCurrentEnv();
 
       auto slotPtr = builder.CreateInBoundsGEP(
-          codegenContext.type_manager.getEnvTy(), // the Env struct type
-          curEnv,                                 // Env*
+          codegenContext.type_manager.envType, // the Env struct type
+          curEnv,                              // Env*
           {
               builder.getInt32(0),  // index into the pointer itself
               builder.getInt32(1),  // field #1 = slots
@@ -242,16 +231,15 @@ llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
 }
 
 llvm::Value *If::codegen(CodegenContext &codegenContext) {
-  auto &builder = codegenContext.context.builder;
-  auto &context = codegenContext.context.context;
+  auto &[context, builder, module] = codegenContext.context;
 
   // 1) Generate the boxed Value* for the condition
   llvm::Value *condBoxed = Cond->codegen(codegenContext);
   if (!condBoxed)
     return nullptr;
 
-  auto rawCond = codegenContext.type_manager.checkAndUnpack(
-      codegenContext, condBoxed, Type::Int);
+  auto rawCond =
+      codegenContext.type_manager.checkAndUnpack(condBoxed, Type::Int);
 
   // 3) Compare i64 != 0 → i1
   llvm::Value *condI1 =
@@ -290,7 +278,7 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
   currentFn->insert(currentFn->end(), MergeBB);
   builder.SetInsertPoint(MergeBB);
   llvm::PHINode *PN =
-      builder.CreatePHI(codegenContext.type_manager.getPtrType(), 2, "iftmp");
+      builder.CreatePHI(codegenContext.type_manager.ptrType, 2, "iftmp");
 
   PN->addIncoming(ThenV, ThenBB);
   PN->addIncoming(ElseV, ElseBB);
@@ -300,23 +288,23 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
 llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
   llvm::Function *currentFn =
       codegenContext.context.builder.GetInsertBlock()->getParent();
-  auto &builder = codegenContext.context.builder;
+  auto &[context, builder, module] = codegenContext.context;
 
   auto lastVal = CreateEntryBlockAlloca(
-      currentFn, codegenContext.type_manager.getPtrType(), "tagbody.ret");
+      currentFn, codegenContext.type_manager.ptrType, "tagbody.ret");
 
   codegenContext.lexenv.tagEnvs().emplace_back();
 
   for (auto &item : body_) {
     if (auto tag =
             std::get_if<std::string>(&item)) { // check for the repeating tags
-      codegenContext.lexenv.lastTagEnv()[*tag] = llvm::BasicBlock::Create(
-          codegenContext.context.context, *tag, currentFn);
+      codegenContext.lexenv.lastTagEnv()[*tag] =
+          llvm::BasicBlock::Create(context, *tag, currentFn);
     }
   }
 
   llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(
-      codegenContext.context.context,
+      context,
       "tagbody.exit" + std::to_string(codegenContext.lexenv.tagEnvs().size()),
       currentFn);
 
@@ -339,8 +327,8 @@ llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
   if (!curBB->getTerminator())
     builder.CreateBr(afterBB);
   builder.SetInsertPoint(afterBB);
-  llvm::Value *last = builder.CreateLoad(
-      codegenContext.type_manager.getPtrType(), lastVal, "tagbody.last");
+  llvm::Value *last = builder.CreateLoad(codegenContext.type_manager.ptrType,
+                                         lastVal, "tagbody.last");
   codegenContext.lexenv.tagEnvs().pop_back();
 
   return last;
@@ -366,8 +354,8 @@ llvm::Value *Go::codegen(CodegenContext &codegenContext) {
 }
 
 llvm::Value *Let::codegen(CodegenContext &codegenContext) {
-  llvm::Function *currentFn =
-      codegenContext.context.builder.GetInsertBlock()->getParent();
+  auto &[context, builder, module] = codegenContext.context;
+  llvm::Function *currentFn = builder.GetInsertBlock()->getParent();
 
   // Emit the initializer before adding the variable to scope, this prevents
   // the initializer from referencing the variable itself.
@@ -378,8 +366,8 @@ llvm::Value *Let::codegen(CodegenContext &codegenContext) {
     return nullptr;
 
   llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(
-      currentFn, codegenContext.type_manager.getPtrType(), name_);
-  codegenContext.context.builder.CreateStore(initVal, Alloca);
+      currentFn, codegenContext.type_manager.ptrType, name_);
+  builder.CreateStore(initVal, Alloca);
 
   // Remember the old variable binding so that we can restore the binding when
   // we unrecurse.

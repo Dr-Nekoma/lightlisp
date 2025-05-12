@@ -1,5 +1,8 @@
 (def foo (a)
   a)
 
+(def bar (a)
+  (foo a))
+
 (def main ()
-  (foo 13))
+  (bar 13))

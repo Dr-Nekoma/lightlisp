@@ -1,8 +1,7 @@
 #include "meta.h"
 
 CodegenContext::Memorymanager::Memorymanager(CodegenContext &codegenContext) {
-  auto &module = codegenContext.context.module;
-  auto &context = codegenContext.context.context;
+  auto &[context, builder, module] = codegenContext.context;
   auto i8Ptr = llvm::PointerType::get(llvm::IntegerType::get(context, 8), 0);
   auto i64Ty = llvm::Type::getInt64Ty(context);
   auto i32Ty = llvm::Type::getInt32Ty(context);
@@ -121,9 +120,8 @@ llvm::GlobalVariable *CodegenContext::Memorymanager::getArenaSizeGV() {
 
 void CodegenContext::Memorymanager::prepareArena(
     CodegenContext &codegenContext) {
-  auto &builder = codegenContext.context.builder;
-  auto &context = codegenContext.context.context;
-  auto i8Ptr = llvm::PointerType::get(llvm::IntegerType::get(context, 8), 0);
+  auto &[context, builder, module] = codegenContext.context;
+  auto i8Ptr = llvm::PointerType::get(context, 0);
 
   int PROT_READ = 1;
   int PROT_WRITE = 2;
@@ -135,12 +133,11 @@ void CodegenContext::Memorymanager::prepareArena(
   auto fd = builder.getInt32(-1);
   auto off = builder.getInt64(0);
 
-  llvm::FunctionType *FT = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(codegenContext.context.context), {i8Ptr},
-      /*vararg=*/false);
-  llvm::Function *F =
-      llvm::Function::Create(FT, llvm::Function::InternalLinkage,
-                             "prepare.arena", codegenContext.context.module);
+  llvm::FunctionType *FT =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context), {i8Ptr},
+                              /*vararg=*/false);
+  llvm::Function *F = llvm::Function::Create(
+      FT, llvm::Function::InternalLinkage, "prepare.arena", module);
 
   llvm::BasicBlock *BB = llvm::BasicBlock::Create(context, "entry", F);
 

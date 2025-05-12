@@ -14,24 +14,22 @@ llvm::Function *emitBuiltIn(
     std::array<std::optional<CodegenContext::TypeRegistry::BuiltInType>, Arity>
         inTypes,
     std::optional<CodegenContext::TypeRegistry::BuiltInType> retType) {
-  auto &M = codegenContext.context.module;
-  auto &C = codegenContext.context.context;
-  auto &builder = codegenContext.context.builder;
+  auto &[context, builder, module] = codegenContext.context;
 
-  auto ptrTy = codegenContext.type_manager.getPtrType();
+  auto ptrType = codegenContext.type_manager.ptrType;
   // Build FunctionType: (ptr,ptr,… Arity times) -> ptr
-  llvm::SmallVector<llvm::Type *, Arity> params(Arity, ptrTy);
-  auto FT = llvm::FunctionType::get(ptrTy, params, /*isVarArg=*/false);
+  llvm::SmallVector<llvm::Type *, Arity> params(Arity, ptrType);
+  auto FT = llvm::FunctionType::get(ptrType, params, /*isVarArg=*/false);
 
-  auto F =
-      llvm::Function::Create(FT, llvm::Function::ExternalLinkage, fnName, M);
+  auto F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, fnName,
+                                  module);
   F->addFnAttr(llvm::Attribute::AlwaysInline);
 
   unsigned idx = 0;
   for (auto &arg : F->args())
     arg.setName(("x" + std::to_string(idx++)));
 
-  auto entry = llvm::BasicBlock::Create(C, "entry", F);
+  auto entry = llvm::BasicBlock::Create(context, "entry", F);
   builder.SetInsertPoint(entry);
 
   llvm::SmallVector<llvm::Value *, Arity> rawArgs;
@@ -39,7 +37,7 @@ llvm::Function *emitBuiltIn(
   for (auto &arg : F->args()) {
     if (inTypes[idx]) {
       auto unpacked = codegenContext.type_manager.checkAndUnpack(
-          codegenContext, &arg, inTypes[idx].value());
+          &arg, inTypes[idx].value());
       rawArgs.push_back(unpacked);
     } else {
       rawArgs.push_back(&arg);
@@ -49,8 +47,8 @@ llvm::Function *emitBuiltIn(
   llvm::Value *rawRes = opFn(builder, rawArgs);
 
   if (retType) {
-    llvm::Value *boxed = codegenContext.type_manager.packVal(
-        codegenContext, rawRes, retType.value());
+    llvm::Value *boxed =
+        codegenContext.type_manager.packVal(rawRes, retType.value());
     builder.CreateRet(boxed);
   } else {
     builder.CreateRet(rawRes);

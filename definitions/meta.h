@@ -53,6 +53,83 @@ public:
     llvm::Module module;
   };
 
+  class Memorymanager {
+  public:
+    Memorymanager(CodegenContext &codegenContext);
+
+    void prepareArena(CodegenContext &codegenContext);
+
+    void munmapArena(IRGenContext &irgc);
+
+    llvm::Function *getmmapFn();
+
+    llvm::Function *getmunmapFn();
+
+    llvm::Function *getTrapFn();
+
+    llvm::Function *getArenaAllocator();
+
+    llvm::GlobalVariable *getArenaPtrGV();
+
+    llvm::GlobalVariable *getArenaNextGV();
+
+    llvm::GlobalVariable *getArenaSizeGV();
+
+  private:
+    llvm::Function *defineArenaAlloc(IRGenContext &irgc);
+
+    llvm::Function *mmapFn_;
+    llvm::Function *munmapFn_;
+    llvm::GlobalVariable *arenaPtrGV_;
+    llvm::GlobalVariable *arenaNextGV_;
+    llvm::GlobalVariable *arenaSizeGV_;
+    llvm::Function *arenaAllocValueFn_;
+  };
+
+  class TypeRegistry {
+  public:
+    TypeRegistry(CodegenContext &context);
+    enum class BuiltInType { Int, Cons, Fn };
+
+    llvm::GlobalVariable *getType(BuiltInType type);
+
+    llvm::GlobalVariable *createBuiltinTypeDescVar(BuiltInType type);
+
+    int toKind(BuiltInType type);
+
+    std::string &toStrName(BuiltInType type);
+
+    llvm::Type *toLLVMType(BuiltInType type);
+
+    void emitCheckType(llvm::Value *val, BuiltInType type);
+
+    llvm::Value *unpackVal(llvm::Value *val, BuiltInType type);
+
+    llvm::Value *packVal(llvm::Value *val, BuiltInType type);
+
+    llvm::Value *checkAndUnpack(llvm::Value *val, BuiltInType type);
+
+    llvm::FunctionType *getStdFnType(size_t args);
+
+    void typeDebug(llvm::Value *val);
+
+    llvm::PointerType *ptrType;
+    llvm::IntegerType *i32Type;
+    llvm::IntegerType *i64Type;
+    llvm::StructType *typeDescType;
+    llvm::StructType *valueType;
+    llvm::StructType *consType;
+    llvm::StructType *envType;
+    llvm::StructType *closureType;
+
+  private:
+    CodegenContext *parent_;
+
+    llvm::StructType *makeValueType(IRGenContext &irgc);
+
+    std::unordered_map<BuiltInType, llvm::GlobalVariable *> builtInTypes_;
+  };
+
   class SymbolTable {
   public:
     SymbolTable(CodegenContext &codegenContext);
@@ -129,106 +206,11 @@ public:
     CodegenContext *parent_;
   };
 
-  class Memorymanager {
-  public:
-    Memorymanager(CodegenContext &codegenContext);
-
-    void prepareArena(CodegenContext &codegenContext);
-
-    void munmapArena(IRGenContext &irgc);
-
-    llvm::Function *getmmapFn();
-
-    llvm::Function *getmunmapFn();
-
-    llvm::Function *getTrapFn();
-
-    llvm::Function *getArenaAllocator();
-
-    llvm::GlobalVariable *getArenaPtrGV();
-
-    llvm::GlobalVariable *getArenaNextGV();
-
-    llvm::GlobalVariable *getArenaSizeGV();
-
-  private:
-    llvm::Function *defineArenaAlloc(IRGenContext &irgc);
-
-    llvm::Function *mmapFn_;
-    llvm::Function *munmapFn_;
-    llvm::GlobalVariable *arenaPtrGV_;
-    llvm::GlobalVariable *arenaNextGV_;
-    llvm::GlobalVariable *arenaSizeGV_;
-    llvm::Function *arenaAllocValueFn_;
-  };
-
-  class TypeRegistry {
-  public:
-    TypeRegistry(IRGenContext &irgc);
-    enum class BuiltInType { Int, Cons, Fn };
-
-    llvm::GlobalVariable *getType(BuiltInType type);
-
-    llvm::StructType *getConsTy();
-
-    llvm::StructType *getTypeDescTy();
-
-    llvm::StructType *getValueTy();
-
-    llvm::PointerType *getPtrType();
-
-    llvm::StructType *getEnvTy();
-
-    llvm::StructType *getClosureTy();
-
-    llvm::GlobalVariable *createBuiltinTypeDescVar(IRGenContext &irgc,
-                                                   BuiltInType type);
-
-    int toKind(BuiltInType type);
-
-    std::string &toStrName(BuiltInType type);
-
-    llvm::Type *toLLVMType(CodegenContext &codegenContext, BuiltInType type);
-
-    void emitCheckType(CodegenContext &codegenContext, llvm::Value *val,
-                       BuiltInType type);
-
-    llvm::Value *unpackVal(CodegenContext &codegenContext, llvm::Value *val,
-                           BuiltInType type);
-
-    llvm::Value *packVal(CodegenContext &codegenContext, llvm::Value *val,
-                         BuiltInType type);
-
-    llvm::Value *checkAndUnpack(CodegenContext &codegenContext,
-                                llvm::Value *val, BuiltInType type);
-
-    void typeDebug(CodegenContext &codegenContext, llvm::Value *val);
-
-  private:
-    llvm::StructType *makeTypeDescType(IRGenContext &irgc);
-
-    llvm::StructType *makeValueType(IRGenContext &irgc);
-
-    llvm::StructType *makeConsType(IRGenContext &irgc);
-
-    llvm::StructType *makeEnvType(IRGenContext &irgc);
-
-    llvm::StructType *makeClosureType(IRGenContext &irgc);
-
-    llvm::StructType *typeDescTy_;
-    llvm::StructType *valueTy_;
-    llvm::PointerType *ptrTy_;
-    llvm::StructType *consTy_;
-    llvm::StructType *envTy_;
-    llvm::StructType *closureTy_;
-    std::unordered_map<BuiltInType, llvm::GlobalVariable *> builtInTypes_;
-  };
-
   IRGenContext context;
   llvm::GlobalVariable *debug;
   llvm::GlobalVariable *debug2;
-  Memorymanager memory_manager;
   TypeRegistry type_manager;
+  Memorymanager memory_manager;
   SymbolTable lexenv;
 
   void addCtor(size_t priority, llvm::Function *ctor);

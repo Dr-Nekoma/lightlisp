@@ -11,8 +11,6 @@
 int genObjectFile(CodegenContext &codegenContext) {
   auto TargetTriple = llvm::sys::getDefaultTargetTriple();
 
-  llvm::errs() << TargetTriple << '\n' << '\n';
-
   llvm::InitializeAllTargetInfos();
   llvm::InitializeAllTargets();
   llvm::InitializeAllTargetMCs();
