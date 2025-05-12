@@ -11,6 +11,8 @@
 int genObjectFile(CodegenContext &codegenContext) {
   auto TargetTriple = llvm::sys::getDefaultTargetTriple();
 
+  llvm::errs() << TargetTriple << '\n' << '\n';
+
   llvm::InitializeAllTargetInfos();
   llvm::InitializeAllTargets();
   llvm::InitializeAllTargetMCs();
@@ -161,9 +163,10 @@ int main(int argc, char **argv) { // Needs cleanup
     codegenContext.memory_manager.munmapArena(codegenContext.context);
 
     // finally return the i32
-    auto loaded =
-        builder.CreateLoad(builder.getInt32Ty(), codegenContext.debug);
-    builder.CreateRet(loaded);
+
+    // auto loaded =
+    //     builder.CreateLoad(builder.getInt32Ty(), codegenContext.debug);
+    builder.CreateRet(ret32);
   }
 
   for (auto &F : codegenContext.context.module) {

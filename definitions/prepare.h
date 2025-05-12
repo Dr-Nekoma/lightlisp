@@ -4,15 +4,20 @@
 #include "meta.h"
 #include "objects.h"
 #include "util.h"
+#include <optional>
 
 llvm::Value *prepareCMain(CodegenContext &codegenContext);
 
 template <unsigned Arity, typename Op>
-llvm::Function *emitBuiltIn(CodegenContext &codegenContext,
-                            llvm::StringRef fnName, Op opFn,
-                            llvm::Function *unboxFn, llvm::Function *boxFn) {
+llvm::Function *emitBuiltIn(
+    CodegenContext &codegenContext, llvm::StringRef fnName, Op opFn,
+    std::array<std::optional<CodegenContext::TypeRegistry::BuiltInType>, Arity>
+        inTypes,
+    std::optional<CodegenContext::TypeRegistry::BuiltInType> retType) {
   auto &M = codegenContext.context.module;
   auto &C = codegenContext.context.context;
+  auto &builder = codegenContext.context.builder;
+
   auto ptrTy = codegenContext.type_manager.getPtrType();
   // Build FunctionType: (ptr,ptr,… Arity times) -> ptr
   llvm::SmallVector<llvm::Type *, Arity> params(Arity, ptrTy);
@@ -27,26 +32,28 @@ llvm::Function *emitBuiltIn(CodegenContext &codegenContext,
     arg.setName(("x" + std::to_string(idx++)));
 
   auto entry = llvm::BasicBlock::Create(C, "entry", F);
-  llvm::IRBuilder<> B(entry);
+  builder.SetInsertPoint(entry);
 
   llvm::SmallVector<llvm::Value *, Arity> rawArgs;
   idx = 0;
   for (auto &arg : F->args()) {
-    if (unboxFn) {
-      rawArgs.push_back(
-          B.CreateCall(unboxFn, {&arg}, ("u" + std::to_string(idx++))));
+    if (inTypes[idx]) {
+      auto unpacked = codegenContext.type_manager.checkAndUnpack(
+          codegenContext, &arg, inTypes[idx].value());
+      rawArgs.push_back(unpacked);
     } else {
       rawArgs.push_back(&arg);
     }
   }
 
-  llvm::Value *rawRes = opFn(B, rawArgs);
+  llvm::Value *rawRes = opFn(builder, rawArgs);
 
-  if (boxFn) {
-    llvm::Value *boxed = B.CreateCall(boxFn, {rawRes}, ("res." + fnName).str());
-    B.CreateRet(boxed);
+  if (retType) {
+    llvm::Value *boxed = codegenContext.type_manager.packVal(
+        codegenContext, rawRes, retType.value());
+    builder.CreateRet(boxed);
   } else {
-    B.CreateRet(rawRes);
+    builder.CreateRet(rawRes);
   }
 
   return F;
@@ -54,18 +61,8 @@ llvm::Function *emitBuiltIn(CodegenContext &codegenContext,
 
 llvm::Function *emitPanic(CodegenContext &codegenContext);
 
-llvm::Function *emitBoxInt(CodegenContext &codegenContext);
-
-llvm::Function *emitUnBoxInt(CodegenContext &codegenContext);
-
 llvm::Function *emitCons(CodegenContext &codegenContext);
 
 llvm::Function *emitCar(CodegenContext &codegenContext);
 
 llvm::Function *emitCdr(CodegenContext &codegenContext);
-
-llvm::Function *emitBoxCons(CodegenContext &codegenContext);
-
-llvm::Function *emitUnBoxCons(CodegenContext &codegenContext);
-
-llvm::Function *emitUnBoxFn(CodegenContext &codegenContext);

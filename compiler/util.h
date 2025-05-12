@@ -13,10 +13,9 @@ public:
   [[nodiscard]] llvm::GlobalVariable *getGlob() const;
 
 private:
-  std::variant<llvm::AllocaInst *, llvm::GlobalVariable *> val_;
+  llvm::AllocaInst *local_;
+  llvm::GlobalVariable *global_;
 };
-
-// llvm::Value *makenull();
 
 llvm::AllocaInst *CreateEntryBlockAlloca(llvm::Function *currentFn,
                                          llvm::Type *type,

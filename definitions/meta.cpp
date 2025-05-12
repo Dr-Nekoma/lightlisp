@@ -5,11 +5,17 @@
 CodegenContext::CodegenContext()
     : context(),
       debug(new llvm::GlobalVariable(
-          this->context.module, llvm::Type::getInt32Ty(this->context.context),
+          this->context.module, llvm::Type::getInt64Ty(this->context.context),
           /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
-          llvm::ConstantInt::get(llvm::Type::getInt32Ty(this->context.context),
-                                 107),
+          llvm::ConstantInt::get(llvm::Type::getInt64Ty(this->context.context),
+                                 157),
           "Debug")),
+      debug2(new llvm::GlobalVariable(
+          this->context.module, llvm::Type::getInt64Ty(this->context.context),
+          /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantInt::get(llvm::Type::getInt64Ty(this->context.context),
+                                 157),
+          "Debug2")),
       memory_manager(*this), type_manager(context), lexenv(*this) {}
 
 CodegenContext::IRGenContext::IRGenContext()
@@ -22,40 +28,35 @@ CodegenContext::SymbolTable::SymbolTable(CodegenContext &codegenContext)
       parent_(&codegenContext) {
 
   builtInFns_["panic"] = emitPanic(codegenContext);
-  builtInFns_["boxInt"] = emitBoxInt(codegenContext);
-  builtInFns_["unboxInt"] = emitUnBoxInt(codegenContext);
   builtInFns_[getBuiltInName("cons")] = emitCons(codegenContext);
-  builtInFns_["boxCons"] = emitBoxCons(codegenContext);
-  builtInFns_["unboxCons"] = emitUnBoxCons(codegenContext);
   builtInFns_[getBuiltInName("car")] = emitCar(codegenContext);
   builtInFns_[getBuiltInName("cdr")] = emitCdr(codegenContext);
-  builtInFns_["unboxFn"] = emitUnBoxFn(codegenContext);
 
   builtInFns_["+"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("+"),
       [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         return builder.CreateAdd(a[0], a[1], "addtmp");
       },
-      getBuiltInFn("unboxInt"), getBuiltInFn("boxInt"));
+      {Type::Int, Type::Int}, Type::Int);
   builtInFns_["-"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("-"),
       [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         return builder.CreateSub(a[0], a[1], "subtmp");
       },
-      getBuiltInFn("unboxInt"), getBuiltInFn("boxInt"));
+      {Type::Int, Type::Int}, Type::Int);
   builtInFns_["*"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("*"),
       [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         return builder.CreateMul(a[0], a[1], "multmp");
       },
-      getBuiltInFn("unboxInt"), getBuiltInFn("boxInt"));
+      {Type::Int, Type::Int}, Type::Int);
   builtInFns_["<"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("<"),
       [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         auto boolRes = builder.CreateICmpSLT(a[0], a[1], "cmptmp");
         return builder.CreateZExt(boolRes, builder.getInt64Ty(), "booltoint");
       },
-      getBuiltInFn("unboxInt"), getBuiltInFn("boxInt"));
+      {Type::Int, Type::Int}, Type::Int);
 
   builtInFns_["cons"] = emitBuiltIn<2>( // FIXME should I even cache normal
                                         // (even if predefined) functions?
@@ -64,7 +65,7 @@ CodegenContext::SymbolTable::SymbolTable(CodegenContext &codegenContext)
         return builder.CreateCall(getBuiltInFn(getBuiltInName("cons")),
                                   {a[0], a[1]}, "cons.ret");
       },
-      nullptr, getBuiltInFn("boxCons"));
+      {std::nullopt}, Type::Cons);
   builtInFns_["car"] = emitBuiltIn<1>(
       codegenContext, "car",
       [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
@@ -74,7 +75,7 @@ CodegenContext::SymbolTable::SymbolTable(CodegenContext &codegenContext)
         call->setDoesNotThrow();
         return call;
       },
-      getBuiltInFn("unboxCons"), nullptr);
+      {Type::Cons}, std::nullopt);
   builtInFns_["cdr"] = emitBuiltIn<1>(
       codegenContext, "cdr",
       [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
@@ -84,7 +85,7 @@ CodegenContext::SymbolTable::SymbolTable(CodegenContext &codegenContext)
         call->setDoesNotThrow();
         return call;
       },
-      getBuiltInFn("unboxCons"), nullptr);
+      {Type::Cons}, std::nullopt);
 
   // FIXME nil init looks bad and not const
   /*auto *zeroPayload = llvm::ConstantAggregateZero::get(
@@ -223,12 +224,6 @@ void CodegenContext::SymbolTable::emitPendingClosure(llvm::Value *global,
   auto envTy = codegenContext.type_manager.getEnvTy();
 
   auto ptr = codegenContext.type_manager.getPtrType();
-
-  auto valueTy = codegenContext.type_manager.getValueTy();
-
-  auto fnTypeSize =
-      dataL.getTypeAllocSize(codegenContext.type_manager.getValueTy());
-
   auto closureTypeSize = dataL.getTypeAllocSize(closureTy);
 
   auto closureBoxed =
@@ -246,11 +241,12 @@ void CodegenContext::SymbolTable::emitPendingClosure(llvm::Value *global,
                          {builder.getInt64(slotsSize)});
 
   auto *lenGEP = builder.CreateStructGEP(envTy, envGEP, 0);
-  builder.CreateStore(builder.getInt64(freeVarsSize), lenGEP);
+  builder.CreateStore(builder.getInt64(freeVarsSize), lenGEP)
+      ->setAlignment(llvm::Align(8));
   for (size_t i = 0; i < freeVarsSize; ++i) {
     auto *slotPtr =
         builder.CreateInBoundsGEP(ptr, freeVarsArray, builder.getInt64(i));
-    builder.CreateStore(freeVars[i], slotPtr);
+    builder.CreateStore(freeVars[i], slotPtr)->setAlignment(llvm::Align(8));
   }
   auto *slotsGEP = builder.CreateStructGEP(envTy, envGEP, 1);
   builder.CreateStore(freeVarsArray, slotsGEP);
@@ -260,19 +256,11 @@ void CodegenContext::SymbolTable::emitPendingClosure(llvm::Value *global,
 
   auto argSizeGEP =
       builder.CreateStructGEP(closureTy, closureBoxed, 2, "arg.size.slot");
-  builder.CreateStore(builder.getInt64(argSize), argSizeGEP);
+  builder.CreateStore(builder.getInt64(argSize), argSizeGEP)
+      ->setAlignment(llvm::Align(8));
 
-  auto boxed =
-      builder.CreateCall(codegenContext.memory_manager.getArenaAllocator(),
-                         {builder.getInt64(fnTypeSize)}, "boxedFn");
-
-  auto fnDescGV = codegenContext.type_manager.getType("Fn");
-  auto typeGEP = builder.CreateStructGEP(valueTy, boxed, 0, "type.ptr");
-  builder.CreateStore(fnDescGV, typeGEP);
-
-  auto payloadGEP = builder.CreateStructGEP(valueTy, boxed, 1, "payload.ptr");
-  builder.CreateStore(closureBoxed, payloadGEP);
-
+  auto boxed = codegenContext.type_manager.packVal(codegenContext, closureBoxed,
+                                                   Type::Fn);
   builder.CreateStore(boxed, global);
 }
 
@@ -334,25 +322,6 @@ llvm::Value *createClosurecall(CodegenContext &codegenContext,
   std::vector<llvm::Value *> envArgs{envPtr};
   envArgs.insert(envArgs.end(), ArgsV.begin(), ArgsV.end());
   llvm::FunctionType *FT = llvm::FunctionType::get(ptr, types, false);
-  if (args.size() == 1) {
-    llvm::StructType *valueTy = codegenContext.type_manager.getValueTy();
-    auto ptrTy = codegenContext.type_manager.getPtrType();
-    auto tdGEP = codegenContext.context.builder.CreateStructGEP(
-        valueTy, envArgs.back(), 0, "type.ptr");
-    auto tdDesc =
-        codegenContext.context.builder.CreateLoad(ptrTy, tdGEP, "type.desc");
-
-    auto kindPtr = codegenContext.context.builder.CreateStructGEP(
-        codegenContext.type_manager.getTypeDescTy(), tdDesc, 1, "kind.ptr");
-    auto kind = codegenContext.context.builder.CreateLoad(
-        codegenContext.context.builder.getInt32Ty(), kindPtr, "kind");
-
-    // auto cmp = codegenContext.context.builder.CreateICmpEQ(
-    //     boxedRet,
-    //     codegenContext.lexenv.lookUpVar("lisp_main").first.getGlob(),
-    //     "comparison");
-    codegenContext.context.builder.CreateStore(kind, codegenContext.debug);
-  }
 
   auto call = builder.CreateCall(FT, fnPtr, envArgs, "closure.res");
 

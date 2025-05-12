@@ -165,8 +165,9 @@ public:
   class TypeRegistry {
   public:
     TypeRegistry(IRGenContext &irgc);
+    enum class BuiltInType { Int, Cons, Fn };
 
-    llvm::GlobalVariable *getType(const std::string &name);
+    llvm::GlobalVariable *getType(BuiltInType type);
 
     llvm::StructType *getConsTy();
 
@@ -181,8 +182,27 @@ public:
     llvm::StructType *getClosureTy();
 
     llvm::GlobalVariable *createBuiltinTypeDescVar(IRGenContext &irgc,
-                                                   llvm::StringRef name,
-                                                   int kind);
+                                                   BuiltInType type);
+
+    int toKind(BuiltInType type);
+
+    std::string &toStrName(BuiltInType type);
+
+    llvm::Type *toLLVMType(CodegenContext &codegenContext, BuiltInType type);
+
+    void emitCheckType(CodegenContext &codegenContext, llvm::Value *val,
+                       BuiltInType type);
+
+    llvm::Value *unpackVal(CodegenContext &codegenContext, llvm::Value *val,
+                           BuiltInType type);
+
+    llvm::Value *packVal(CodegenContext &codegenContext, llvm::Value *val,
+                         BuiltInType type);
+
+    llvm::Value *checkAndUnpack(CodegenContext &codegenContext,
+                                llvm::Value *val, BuiltInType type);
+
+    void typeDebug(CodegenContext &codegenContext, llvm::Value *val);
 
   private:
     llvm::StructType *makeTypeDescType(IRGenContext &irgc);
@@ -201,11 +221,12 @@ public:
     llvm::StructType *consTy_;
     llvm::StructType *envTy_;
     llvm::StructType *closureTy_;
-    std::unordered_map<std::string, llvm::GlobalVariable *> builtInTypes_;
+    std::unordered_map<BuiltInType, llvm::GlobalVariable *> builtInTypes_;
   };
 
   IRGenContext context;
   llvm::GlobalVariable *debug;
+  llvm::GlobalVariable *debug2;
   Memorymanager memory_manager;
   TypeRegistry type_manager;
   SymbolTable lexenv;
@@ -217,3 +238,9 @@ public:
 
 llvm::Value *createClosurecall(CodegenContext &codegenContext,
                                llvm::Value *inst, std::vector<ObjPtr> &args);
+
+namespace Type {
+const auto Int = CodegenContext::TypeRegistry::BuiltInType::Int;
+const auto Cons = CodegenContext::TypeRegistry::BuiltInType::Cons;
+const auto Fn = CodegenContext::TypeRegistry::BuiltInType::Fn;
+} // namespace Type

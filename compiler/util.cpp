@@ -1,20 +1,13 @@
 #include "util.h"
 
-VarInst::VarInst(llvm::AllocaInst *alloca) : val_(alloca) {}
+VarInst::VarInst(llvm::AllocaInst *alloca) : local_(alloca), global_(nullptr) {}
 
-VarInst::VarInst(llvm::GlobalVariable *global) : val_(global) {}
+VarInst::VarInst(llvm::GlobalVariable *global)
+    : local_(nullptr), global_(global) {}
 
-[[nodiscard]] llvm::AllocaInst *VarInst::get() const {
-  if (std::holds_alternative<llvm::AllocaInst *>(val_))
-    return std::get<llvm::AllocaInst *>(val_);
-  return nullptr;
-}
+[[nodiscard]] llvm::AllocaInst *VarInst::get() const { return local_; }
 
-[[nodiscard]] llvm::GlobalVariable *VarInst::getGlob() const {
-  if (std::holds_alternative<llvm::GlobalVariable *>(val_))
-    return std::get<llvm::GlobalVariable *>(val_);
-  return nullptr;
-}
+[[nodiscard]] llvm::GlobalVariable *VarInst::getGlob() const { return global_; }
 
 llvm::AllocaInst *CreateEntryBlockAlloca(llvm::Function *currentFn,
                                          llvm::Type *type,

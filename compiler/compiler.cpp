@@ -7,10 +7,9 @@ llvm::Value *Number::codegen(CodegenContext &codegenContext) {
   auto &B = codegenContext.context.builder;
   llvm::Value *raw = B.getInt64(value_);
 
-  llvm::Function *boxFn = codegenContext.lexenv.getBuiltInFn("boxInt");
-
   auto name = "num" + std::to_string(value_);
-  llvm::Value *boxed = B.CreateCall(boxFn, {raw}, name);
+  llvm::Value *boxed =
+      codegenContext.type_manager.packVal(codegenContext, raw, Type::Int);
 
   return boxed;
 }
@@ -75,18 +74,16 @@ llvm::Value *Call::codegen(CodegenContext &codegenContext) {
   }
   auto userVal = codegenContext.lexenv.lookUpVar(callee_).first;
   if (auto local = userVal.get()) {
-    auto unboxFn = codegenContext.lexenv.getBuiltInFn("unboxFn");
-    auto closure = codegenContext.context.builder.CreateCall(unboxFn, {local},
-                                                             "closure.ptr");
+    auto closure = codegenContext.type_manager.checkAndUnpack(codegenContext,
+                                                              local, Type::Fn);
 
     return createClosurecall(codegenContext, closure, args_);
   }
   if (auto global = userVal.getGlob()) {
-    auto unboxFn = codegenContext.lexenv.getBuiltInFn("unboxFn");
     auto loaded = codegenContext.context.builder.CreateLoad(
         codegenContext.type_manager.getPtrType(), global, "loaded.global");
-    auto closure = codegenContext.context.builder.CreateCall(unboxFn, {loaded},
-                                                             "closure.ptr");
+    auto closure = codegenContext.type_manager.checkAndUnpack(codegenContext,
+                                                              loaded, Type::Fn);
     return createClosurecall(codegenContext, closure, args_);
   }
   return nullptr;
@@ -125,10 +122,11 @@ llvm::Value *Function::codegen(CodegenContext &codegenContext) {
     throw std::runtime_error("Function cannot be redefined.");*/
   auto ptrType = codegenContext.type_manager.getPtrType();
   auto envTy = codegenContext.type_manager.getEnvTy();
+  auto &builder = codegenContext.context.builder;
   auto size = args_.size();
   std::vector<llvm::Type *> types;
   types.reserve(1 + size);
-  types.push_back(ptrType);
+  types.push_back(envTy);
   for (size_t i = 0; i < size; ++i)
     types.push_back(ptrType);
   llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, types, false);
@@ -142,20 +140,19 @@ llvm::Value *Function::codegen(CodegenContext &codegenContext) {
   arg.setName("_____env");
 
   unsigned Idx = 0;
-  auto it = F->arg_begin();
-  it++;
-  for (; it != F->arg_end(); it++)
-    it->setName(args_[Idx++]);
+  auto it1 = F->arg_begin(); // ugly, FIXME
+  it1++;
+  for (; it1 != F->arg_end(); it1++)
+    it1->setName(args_[Idx++]);
 
   // Create a new basic block to start insertion into.
   llvm::BasicBlock *BB =
       llvm::BasicBlock::Create(codegenContext.context.context, "entry", F);
-  codegenContext.context.builder.SetInsertPoint(BB);
+  builder.SetInsertPoint(BB);
 
   codegenContext.lexenv.enterScope();
-  it = F->arg_begin();
+  auto it = F->arg_begin();
   it++;
-
   for (; it != F->arg_end(); it++) {
     llvm::AllocaInst *Alloca =
         CreateEntryBlockAlloca(F, codegenContext.type_manager.getPtrType(),
@@ -253,8 +250,8 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
   if (!condBoxed)
     return nullptr;
 
-  llvm::Function *unboxFn = codegenContext.lexenv.getBuiltInFn("unboxInt");
-  auto rawCond = builder.CreateCall(unboxFn, {condBoxed}, "unboxedCond");
+  auto rawCond = codegenContext.type_manager.checkAndUnpack(
+      codegenContext, condBoxed, Type::Int);
 
   // 3) Compare i64 != 0 → i1
   llvm::Value *condI1 =

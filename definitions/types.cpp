@@ -6,9 +6,9 @@ CodegenContext::TypeRegistry::TypeRegistry(IRGenContext &irgc)
       consTy_(makeConsType(irgc)), envTy_(makeEnvType(irgc)),
       closureTy_(makeClosureType(irgc)) {
 
-  createBuiltinTypeDescVar(irgc, "Fn", 27);
-  createBuiltinTypeDescVar(irgc, "Int", 14);
-  createBuiltinTypeDescVar(irgc, "Cons", 1);
+  createBuiltinTypeDescVar(irgc, Type::Fn);
+  createBuiltinTypeDescVar(irgc, Type::Int);
+  createBuiltinTypeDescVar(irgc, Type::Cons);
 }
 
 llvm::StructType *
@@ -62,12 +62,14 @@ CodegenContext::TypeRegistry::makeClosureType(IRGenContext &irgc) {
   return closureTy;
 }
 
-llvm::GlobalVariable *CodegenContext::TypeRegistry::createBuiltinTypeDescVar(
-    IRGenContext &irgc, llvm::StringRef name, int kind) {
+llvm::GlobalVariable *
+CodegenContext::TypeRegistry::createBuiltinTypeDescVar(IRGenContext &irgc,
+                                                       BuiltInType type) {
   auto TypeDescTy = getTypeDescTy();
   auto i32Ty = llvm::Type::getInt32Ty(irgc.context);
 
   // name string constant
+  auto name = toStrName(type);
   auto nameConst = llvm::ConstantDataArray::getString(irgc.context, name);
   auto nameGV = new llvm::GlobalVariable(
       irgc.module, nameConst->getType(), true,
@@ -79,18 +81,17 @@ llvm::GlobalVariable *CodegenContext::TypeRegistry::createBuiltinTypeDescVar(
       nameConst->getType(), nameGV, idxs);
   // struct initializer { i8* namePtr, i32 kind }
   auto init = llvm::ConstantStruct::get(
-      TypeDescTy, {namePtr, llvm::ConstantInt::get(i32Ty, kind)});
+      TypeDescTy, {namePtr, llvm::ConstantInt::get(i32Ty, toKind(type))});
   // the global TypeDesc
   auto newtype = new llvm::GlobalVariable(irgc.module, TypeDescTy, true,
                                           llvm::GlobalValue::ExternalLinkage,
                                           init, "type." + name);
-  builtInTypes_.emplace(std::string(name), newtype);
+  builtInTypes_.emplace(type, newtype);
   return newtype;
 }
 
-llvm::GlobalVariable *
-CodegenContext::TypeRegistry::getType(const std::string &name) {
-  if (auto it = builtInTypes_.find(name); it != builtInTypes_.end()) {
+llvm::GlobalVariable *CodegenContext::TypeRegistry::getType(BuiltInType type) {
+  if (auto it = builtInTypes_.find(type); it != builtInTypes_.end()) {
     return it->second;
   }
   return nullptr;
@@ -112,4 +113,141 @@ llvm::StructType *CodegenContext::TypeRegistry::getEnvTy() { return envTy_; }
 
 llvm::StructType *CodegenContext::TypeRegistry::getClosureTy() {
   return closureTy_;
+}
+
+int CodegenContext::TypeRegistry::toKind(BuiltInType type) {
+  switch (type) {
+  case CodegenContext::TypeRegistry::BuiltInType::Int:
+    return 0;
+  case CodegenContext::TypeRegistry::BuiltInType::Cons:
+    return 1;
+  case CodegenContext::TypeRegistry::BuiltInType::Fn:
+    return -1;
+  }
+}
+
+std::string &CodegenContext::TypeRegistry::toStrName(BuiltInType type) {
+  switch (type) {
+  case CodegenContext::TypeRegistry::BuiltInType::Int: {
+    static std::string intName("Int");
+    return intName;
+  }
+  case CodegenContext::TypeRegistry::BuiltInType::Cons: {
+    static std::string consName("Cons");
+    return consName;
+  }
+  case CodegenContext::TypeRegistry::BuiltInType::Fn: {
+    static std::string fnName("Fn");
+    return fnName;
+  }
+  }
+}
+
+void CodegenContext::TypeRegistry::emitCheckType(CodegenContext &codegenContext,
+                                                 llvm::Value *val,
+                                                 BuiltInType type) {
+  llvm::StructType *valueTy = getValueTy();
+  auto &builder = codegenContext.context.builder;
+  auto i32Ty = builder.getInt32Ty();
+
+  auto ptrTy = getPtrType();
+  auto tdTy = getTypeDescTy();
+
+  auto tdGEP = builder.CreateStructGEP(valueTy, val, 0, "type.ptr");
+  auto tdDesc = builder.CreateLoad(ptrTy, tdGEP, "type.desc");
+
+  auto kindPtr = builder.CreateStructGEP(tdTy, tdDesc, 1, "kind.ptr");
+  auto kind = builder.CreateLoad(i32Ty, kindPtr, "kind");
+
+  auto isInt =
+      builder.CreateICmpEQ(kind, llvm::ConstantInt::get(i32Ty, toKind(type)),
+                           "cmp.is" + toStrName(type) + "Kind");
+
+  auto curBB = builder.GetInsertBlock();
+
+  auto contBB = llvm::BasicBlock::Create(codegenContext.context.context,
+                                         "unbox.ok", curBB->getParent());
+
+  auto panicBB = llvm::BasicBlock::Create(codegenContext.context.context,
+                                          "unbox.error", curBB->getParent());
+
+  builder.CreateCondBr(isInt, contBB, panicBB);
+
+  builder.SetInsertPoint(panicBB);
+  llvm::Function *panicFn = codegenContext.lexenv.getBuiltInFn("panic");
+
+  builder.CreateCall(panicFn, {});
+
+  builder.CreateUnreachable();
+
+  builder.SetInsertPoint(contBB);
+}
+
+void CodegenContext::TypeRegistry::typeDebug(CodegenContext &codegenContext,
+                                             llvm::Value *val) {
+  llvm::StructType *valueTy = getValueTy();
+  auto &builder = codegenContext.context.builder;
+  auto i32Ty = builder.getInt32Ty();
+
+  auto ptrTy = getPtrType();
+  auto tdTy = getTypeDescTy();
+
+  auto tdGEP = builder.CreateStructGEP(valueTy, val, 0, "type.ptr");
+  auto tdDesc = builder.CreateLoad(ptrTy, tdGEP, "type.desc");
+
+  auto kindPtr = builder.CreateStructGEP(tdTy, tdDesc, 1, "kind.ptr");
+  auto kind = builder.CreateLoad(i32Ty, kindPtr, "kind");
+  builder.CreateStore(kind, codegenContext.debug);
+}
+
+llvm::Value *
+CodegenContext::TypeRegistry::unpackVal(CodegenContext &codegenContext,
+                                        llvm::Value *val, BuiltInType type) {
+  auto valPayloadGEP = codegenContext.context.builder.CreateStructGEP(
+      getValueTy(), val, 1, "val.payload.ptr");
+  auto unpackedVal = codegenContext.context.builder.CreateLoad(
+      toLLVMType(codegenContext, type), valPayloadGEP, "val.unboxed");
+  unpackedVal->setAlignment(llvm::Align(8));
+  return unpackedVal;
+}
+
+llvm::Value *
+CodegenContext::TypeRegistry::packVal(CodegenContext &codegenContext,
+                                      llvm::Value *val, BuiltInType type) {
+
+  llvm::StructType *ValueTy = codegenContext.type_manager.getValueTy();
+  auto &builder = codegenContext.context.builder;
+
+  uint64_t typeSize =
+      codegenContext.context.module.getDataLayout().getTypeAllocSize(
+          codegenContext.type_manager.getValueTy());
+
+  auto boxed =
+      builder.CreateCall(codegenContext.memory_manager.getArenaAllocator(),
+                         {builder.getInt64(typeSize)}, "boxedVal");
+
+  auto typeDescGV = codegenContext.type_manager.getType(type);
+  auto typeGEP = builder.CreateStructGEP(ValueTy, boxed, 0, "type.ptr");
+  builder.CreateStore(typeDescGV, typeGEP);
+
+  auto payloadGEP = builder.CreateStructGEP(ValueTy, boxed, 1, "payload.ptr");
+  builder.CreateStore(val, payloadGEP)->setAlignment(llvm::Align(8));
+  return boxed;
+}
+
+llvm::Value *CodegenContext::TypeRegistry::checkAndUnpack(
+    CodegenContext &codegenContext, llvm::Value *val, BuiltInType type) {
+  emitCheckType(codegenContext, val, type);
+  return unpackVal(codegenContext, val, type);
+}
+
+llvm::Type *
+CodegenContext::TypeRegistry::toLLVMType(CodegenContext &codegenContext,
+                                         BuiltInType type) {
+  switch (type) {
+  case CodegenContext::TypeRegistry::BuiltInType::Int:
+    return codegenContext.context.builder.getInt64Ty();
+  default:
+    return codegenContext.type_manager.getPtrType();
+  }
 }
