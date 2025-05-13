@@ -140,7 +140,7 @@ TaggedLLVMVal Function::codegen(CodegenContext &codegenContext) {
   llvm::BasicBlock *BB = llvm::BasicBlock::Create(context, "entry", F);
   builder.SetInsertPoint(BB);
 
-  codegenContext.lexenv.enterScope();
+  codegenContext.lexenv.enterScope(true);
   auto it = F->arg_begin();
   it++;
   for (; it != F->arg_end(); it++) {
@@ -155,7 +155,7 @@ TaggedLLVMVal Function::codegen(CodegenContext &codegenContext) {
   if (llvm::Value *RetVal = body_->codegen(codegenContext).get()) {
     builder.CreateRet(RetVal);
 
-    codegenContext.lexenv.exitScope();
+    codegenContext.lexenv.exitScope(true);
 
     llvm::verifyFunction(*F);
 
@@ -173,7 +173,7 @@ TaggedLLVMVal Function::codegen(CodegenContext &codegenContext) {
     return F;
   }
 
-  codegenContext.lexenv.exitScope();
+  codegenContext.lexenv.exitScope(true);
   // Error reading body, remove function.
   F->eraseFromParent();
   return {};
@@ -370,7 +370,7 @@ TaggedLLVMVal Let::codegen(CodegenContext &codegenContext) {
 
   // Remember the old variable binding so that we can restore the binding when
   // we unrecurse.
-  codegenContext.lexenv.enterScope();
+  codegenContext.lexenv.enterScope(false);
 
   // Remember this binding.
   codegenContext.lexenv.addVar(name_, Alloca);
@@ -381,7 +381,7 @@ TaggedLLVMVal Let::codegen(CodegenContext &codegenContext) {
     return {};
 
   // Pop our variable from scope.
-  codegenContext.lexenv.exitScope();
+  codegenContext.lexenv.exitScope(false);
 
   // Return the body computation.
   return BodyVal;

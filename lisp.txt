@@ -1,2 +1,27 @@
+(def fib2 (n c)
+  (tagbody
+    start
+    (if (< n 1)
+        (cdr c)
+        (let a (cdr c)
+          (let b (+ (car c) (cdr c))
+            (tagbody 
+              (setq n (- n 1))
+              (setq c (cons a b))
+              (go start)))))))
+
+
+(def fib (n a b)
+  (tagbody
+    start
+    (if (< n 1)
+        b
+        (tagbody 
+         (setq b (+ a b))
+         (setq a (- b a))
+         (setq n (- n 1))
+         (go start)))))
+
+
 (def main ()
-  300)
+  (fib2 10 (cons 0 1)))

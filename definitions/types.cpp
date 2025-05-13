@@ -138,7 +138,6 @@ llvm::Value *CodegenContext::TypeRegistry::unpackVal(llvm::Value *val,
       valueType, val, 1, "val.payload.ptr");
   auto unpackedVal = parent_->context.builder.CreateLoad(
       toLLVMType(type), valPayloadGEP, "val.unboxed");
-  unpackedVal->setAlignment(llvm::Align(8));
   return unpackedVal;
 }
 
@@ -158,7 +157,7 @@ llvm::Value *CodegenContext::TypeRegistry::packVal(llvm::Value *val,
   builder.CreateStore(typeDescGV, typeGEP);
 
   auto payloadGEP = builder.CreateStructGEP(valueType, boxed, 1, "payload.ptr");
-  builder.CreateStore(val, payloadGEP)->setAlignment(llvm::Align(8));
+  builder.CreateStore(val, payloadGEP);
   return boxed;
 }
 

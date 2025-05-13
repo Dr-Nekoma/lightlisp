@@ -134,9 +134,9 @@ public:
   public:
     SymbolTable(CodegenContext &codegenContext);
 
-    void enterScope();
+    void enterScope(bool isFnScope);
 
-    void exitScope();
+    void exitScope(bool isFnScope);
 
     bool isTopLevel();
 
@@ -185,14 +185,21 @@ public:
       llvm::GlobalVariable *fnGlobal_;
     };
 
+    struct EnvManager {
+      EnvManager() = default;
+
+      std::vector<std::unordered_map<std::string, llvm::AllocaInst *>>
+          env_stack;
+      std::vector<size_t> fn_idxes;
+    };
+
     llvm::Function *trapFn_;
 
     std::unordered_map<std::string, llvm::GlobalVariable *> constantGlobals_;
 
     std::unordered_map<std::string, llvm::Function *> builtInFns_;
 
-    std::vector<std::unordered_map<std::string, llvm::AllocaInst *>>
-        named_values_;
+    EnvManager named_values_;
 
     std::unordered_map<std::string, llvm::GlobalVariable *> globals_;
 

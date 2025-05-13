@@ -72,7 +72,6 @@ CodegenContext::Memorymanager::defineArenaAlloc(IRGenContext &irgc) {
   // Load the current index
   auto idx =
       B.CreateLoad(getArenaNextGV()->getValueType(), getArenaNextGV(), "idx");
-  idx->setAlignment(llvm::Align(8));
   // Compute the byte-offset = idx + size
   auto size = &*it;
   llvm::Value *offset = B.CreateAdd(idx, size, "offsetBytes");
@@ -80,14 +79,13 @@ CodegenContext::Memorymanager::defineArenaAlloc(IRGenContext &irgc) {
   // Load the base pointer (i8*)
   auto base =
       B.CreateLoad(getArenaPtrGV()->getValueType(), getArenaPtrGV(), "base");
-  base->setAlignment(llvm::Align(8));
 
   // Compute raw cell ptr = base + idx
   //    (getelementptr i8, i8* base, i64 offset)
   llvm::Value *rawCellPtr =
       B.CreateInBoundsGEP(llvm::Type::getInt8Ty(C), base, idx, "cellRawPtr");
 
-  B.CreateStore(offset, getArenaNextGV())->setAlignment(llvm::Align(8));
+  B.CreateStore(offset, getArenaNextGV());
 
   // No cast, this is raw allocated space
   B.CreateRet(rawCellPtr);
@@ -144,14 +142,13 @@ void CodegenContext::Memorymanager::prepareArena(
   builder.SetInsertPoint(BB);
   auto sizeVal =
       builder.CreateLoad(builder.getInt64Ty(), getArenaSizeGV(), "size");
-  sizeVal->setAlignment(llvm::Align(8));
   // call mmap(NULL, size, prot, flags, fd, off)
   auto basePtr = builder.CreateCall(
       getmmapFn(),
       {llvm::Constant::getNullValue(i8Ptr), sizeVal, prot, flags, fd, off},
       "arenaBaseRaw");
   // store into your global
-  builder.CreateStore(basePtr, getArenaPtrGV())->setAlignment(llvm::Align(8));
+  builder.CreateStore(basePtr, getArenaPtrGV());
   builder.CreateRet(nullptr);
 
   codegenContext.addCtor(0, F);

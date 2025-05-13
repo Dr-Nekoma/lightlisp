@@ -98,13 +98,21 @@ CodegenContext::SymbolTable::SymbolTable(CodegenContext &codegenContext)
                                       "nil"));*/
 }
 
-void CodegenContext::SymbolTable::enterScope() { named_values_.emplace_back(); }
+void CodegenContext::SymbolTable::enterScope(bool isFnScope) {
+  named_values_.env_stack.emplace_back();
+  if (isFnScope)
+    named_values_.fn_idxes.emplace_back(named_values_.env_stack.size() - 1);
+}
 
-void CodegenContext::SymbolTable::exitScope() { named_values_.pop_back(); }
+void CodegenContext::SymbolTable::exitScope(bool isFnScope) {
+  named_values_.env_stack.pop_back();
+  if (isFnScope)
+    named_values_.fn_idxes.pop_back();
+}
 
 void CodegenContext::SymbolTable::addVar(const std::string &name,
                                          llvm::AllocaInst *inst) {
-  named_values_.back().emplace(name, inst);
+  named_values_.env_stack.back().emplace(name, inst);
 }
 
 void CodegenContext::SymbolTable::addVar(const std::string &name,
@@ -116,11 +124,13 @@ std::pair<VarInst, CodegenContext::SymbolTable::VarStatus>
 CodegenContext::SymbolTable::lookUpVar(const std::string &name) {
   llvm::AllocaInst *ret = nullptr;
   auto local = CodegenContext::SymbolTable::VarStatus::NotFound;
-  for (auto env = named_values_.rbegin(); env != named_values_.rend(); ++env) {
+  auto idx = named_values_.env_stack.size() - 1;
+  for (auto env = named_values_.env_stack.rbegin();
+       env != named_values_.env_stack.rend(); ++env, idx--) {
     auto it = env->find(name);
     if (it != env->end()) {
       ret = it->second;
-      local = env == named_values_.rbegin()
+      local = idx >= named_values_.fn_idxes.back()
                   ? CodegenContext::SymbolTable::VarStatus::Local
                   : CodegenContext::SymbolTable::VarStatus::Captured;
       break;
@@ -157,6 +167,8 @@ llvm::Function *CodegenContext::SymbolTable::getTrapFn() { return trapFn_; }
 
 void CodegenContext::SymbolTable::addFreeVar(const std::string &name,
                                              llvm::AllocaInst *var) {
+  if (freeVars_.empty()) // no the best fix maybe
+    freeVars_.emplace_back();
   auto &last = freeVars_.back();
   for (auto &pair : last) {
     if (pair.first == name) {
@@ -239,12 +251,11 @@ void CodegenContext::SymbolTable::emitPendingClosure(llvm::Value *global,
                          {builder.getInt64(slotsSize)});
 
   auto *lenGEP = builder.CreateStructGEP(envType, envGEP, 0);
-  builder.CreateStore(builder.getInt64(freeVarsSize), lenGEP)
-      ->setAlignment(llvm::Align(8));
+  builder.CreateStore(builder.getInt64(freeVarsSize), lenGEP);
   for (size_t i = 0; i < freeVarsSize; ++i) {
     auto *slotPtr =
         builder.CreateInBoundsGEP(ptrType, freeVarsArray, builder.getInt64(i));
-    builder.CreateStore(freeVars[i], slotPtr)->setAlignment(llvm::Align(8));
+    builder.CreateStore(freeVars[i], slotPtr);
   }
   auto *slotsGEP = builder.CreateStructGEP(envType, envGEP, 1);
   builder.CreateStore(freeVarsArray, slotsGEP);
@@ -254,8 +265,7 @@ void CodegenContext::SymbolTable::emitPendingClosure(llvm::Value *global,
 
   auto argSizeGEP =
       builder.CreateStructGEP(closureType, closureBoxed, 2, "arg.size.slot");
-  builder.CreateStore(builder.getInt64(argSize), argSizeGEP)
-      ->setAlignment(llvm::Align(8));
+  builder.CreateStore(builder.getInt64(argSize), argSizeGEP);
 
   auto boxed = codegenContext.type_manager.packVal(closureBoxed, Type::Fn);
   builder.CreateStore(boxed, global);
