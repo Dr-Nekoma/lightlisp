@@ -80,7 +80,7 @@ prepareTopLevelFns(CodegenContext &codegenContext, Parser &&parser) {
   }
 
   for (auto &Fptr : functions) {
-    if (!Fptr->codegen(codegenContext))
+    if (!Fptr->codegen(codegenContext).get())
       throw std::runtime_error("Codegen failed for a function");
   }
   return functions;

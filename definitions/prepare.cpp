@@ -2,8 +2,8 @@
 
 llvm::Value *prepareCMain(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
-  Call mainCall("lisp_main", {});
-  auto boxedRet = mainCall.codegen(codegenContext);
+  Call mainCall(std::make_unique<Variable>("lisp_main"), {});
+  auto boxedRet = mainCall.codegen(codegenContext).get();
   auto int64Val =
       codegenContext.type_manager.checkAndUnpack(boxedRet, Type::Int);
 

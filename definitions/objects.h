@@ -6,14 +6,14 @@ class Object {
 public:
   virtual ~Object() {}
 
-  virtual llvm::Value *codegen(CodegenContext &CodegenContext) = 0;
+  virtual TaggedLLVMVal codegen(CodegenContext &CodegenContext) = 0;
 };
 
 class Number : public Object {
 public:
   explicit Number(int64_t value = 0) : value_(value) {}
 
-  llvm::Value *codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
   [[nodiscard]] int64_t getValue() const { return value_; }
 
@@ -107,7 +107,7 @@ class Variable : public Object {
 public:
   Variable(std::string name) : name_(std::move(name)) {}
 
-  llvm::Value *codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
   [[nodiscard]] const std::string &getName() const { return name_; }
 
@@ -118,13 +118,13 @@ private:
 /// CallObject - Expression class for function calls.
 class Call : public Object {
 public:
-  Call(std::string callee, std::vector<ObjPtr> args)
+  Call(ObjPtr callee, std::vector<ObjPtr> args)
       : callee_(std::move(callee)), args_(std::move(args)) {}
 
-  llvm::Value *codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::string callee_;
+  ObjPtr callee_;
   std::vector<ObjPtr> args_;
 };
 
@@ -152,7 +152,7 @@ public:
       : name_(std::move(name)), args_(std::move(args)), body_(std::move(body)) {
   }
 
-  llvm::Value *codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
   std::string name_;
@@ -160,14 +160,14 @@ private:
   ObjPtr body_;
 };
 
-class BuiltInOp : public Object {
+class Setq : public Object {
 public:
-  BuiltInOp(std::string name, ObjPtr fst, ObjPtr snd)
+  Setq(std::string name, ObjPtr fst, ObjPtr snd)
       : name_(std::move(name)), fst_(std::move(fst)), snd_(std::move(snd)) {}
 
   [[nodiscard]] const std::string &getName() const { return name_; }
 
-  llvm::Value *codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
   std::string name_;
@@ -180,7 +180,7 @@ public:
   If(ObjPtr Cond, ObjPtr Then, ObjPtr Else)
       : Cond(std::move(Cond)), Then(std::move(Then)), Else(std::move(Else)) {}
 
-  llvm::Value *codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
   ObjPtr Cond, Then, Else;
@@ -191,7 +191,7 @@ public:
   Goto(std::vector<std::variant<ObjPtr, std::string>> &&body)
       : body_(std::move(body)) {}
 
-  llvm::Value *codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
   std::vector<std::variant<ObjPtr, std::string>> body_;
@@ -201,7 +201,7 @@ class Go : public Object {
 public:
   Go(std::string &&tag) : tag_(tag) {}
 
-  llvm::Value *codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
   std::string tag_;
@@ -217,5 +217,5 @@ public:
       : name_(std::move(name)), init_(std::move(init)), body_(std::move(body)) {
   }
 
-  llvm::Value *codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 };

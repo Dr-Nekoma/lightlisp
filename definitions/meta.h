@@ -150,7 +150,9 @@ public:
 
     std::vector<std::pair<std::string, llvm::AllocaInst *>> popFreeVars();
 
-    std::pair<VarInst, bool> lookUpVar(const std::string &name);
+    enum class VarStatus { Local, Captured, Global, NotFound };
+
+    std::pair<VarInst, VarStatus> lookUpVar(const std::string &name);
 
     size_t freeVarsSize();
 

@@ -44,18 +44,18 @@ ObjectBuilder::ObjectBuilder() {
 
   builders_["def"] = def_builder;
 
-  auto builtin_builder = [](ObjectBuilder &builder, std::string &name,
-                            SyntaxObject *syntax) -> ObjPtr {
+  auto setq_builder = [](ObjectBuilder &builder, std::string &name,
+                         SyntaxObject *syntax) -> ObjPtr {
     auto view = Cell::ListView(syntax);
     auto it = view.begin();
     auto fst = codeWalk(builder, *it);
     it++;
     auto snd = codeWalk(builder, *it);
     // assert(cdrCell->get<1>() == nullptr);
-    return std::make_unique<BuiltInOp>(name, std::move(fst), std::move(snd));
+    return std::make_unique<Setq>(name, std::move(fst), std::move(snd));
   };
 
-  builders_["setq"] = builtin_builder;
+  builders_["setq"] = setq_builder;
 
   auto tagbody_builder = [](ObjectBuilder &builder, std::string &,
                             SyntaxObject *syntax) -> ObjPtr {
@@ -158,8 +158,9 @@ ObjPtr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax) {
           search != builder.builders_.end()) {
         return search->second(builder, name, body.get());
       } else {
+        auto callee = codeWalk(builder, fstObj);
         auto args = lispListToVec(builder, body.get());
-        return std::make_unique<Call>(std::move(name), std::move(args));
+        return std::make_unique<Call>(std::move(callee), std::move(args));
       }
     } else {
       // for now

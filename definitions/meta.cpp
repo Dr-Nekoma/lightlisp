@@ -112,21 +112,23 @@ void CodegenContext::SymbolTable::addVar(const std::string &name,
   globals_.emplace(name, inst);
 }
 
-std::pair<VarInst, bool>
+std::pair<VarInst, CodegenContext::SymbolTable::VarStatus>
 CodegenContext::SymbolTable::lookUpVar(const std::string &name) {
   llvm::AllocaInst *ret = nullptr;
-  auto local = false;
+  auto local = CodegenContext::SymbolTable::VarStatus::NotFound;
   for (auto env = named_values_.rbegin(); env != named_values_.rend(); ++env) {
     auto it = env->find(name);
     if (it != env->end()) {
       ret = it->second;
-      local = env == named_values_.rbegin();
+      local = env == named_values_.rbegin()
+                  ? CodegenContext::SymbolTable::VarStatus::Local
+                  : CodegenContext::SymbolTable::VarStatus::Captured;
       break;
     }
   }
   if (!ret)
     if (auto it = globals_.find(name); it != globals_.end())
-      return {it->second, false};
+      return {it->second, CodegenContext::SymbolTable::VarStatus::Global};
 
   return {ret, local};
 }
@@ -301,7 +303,7 @@ llvm::Value *createClosurecall(CodegenContext &codegenContext,
 
   std::vector<llvm::Value *> ArgsV;
   for (auto &Arg : args) {
-    ArgsV.push_back(Arg->codegen(codegenContext));
+    ArgsV.push_back(Arg->codegen(codegenContext).get());
     if (!ArgsV.back())
       return nullptr;
   }

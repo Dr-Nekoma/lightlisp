@@ -1,8 +1,2 @@
-(def foo (a)
-  a)
-
-(def bar (a)
-  (foo a))
-
 (def main ()
-  (bar 13))
+  300)
