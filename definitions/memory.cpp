@@ -162,6 +162,5 @@ void CodegenContext::Memorymanager::munmapArena(IRGenContext &irgc) {
   auto base = builder.CreateLoad(i8Ptr, getArenaPtrGV(), "base");
   auto sizeVal2 =
       builder.CreateLoad(builder.getInt64Ty(), getArenaSizeGV(), "size2");
-  sizeVal2->setAlignment(llvm::Align(8));
   builder.CreateCall(getmunmapFn(), {base, sizeVal2});
 }

@@ -61,9 +61,8 @@ int genObjectFile(CodegenContext &codegenContext) {
   return 0;
 }
 
-static std::vector<std::unique_ptr<Function>>
-prepareTopLevelFns(CodegenContext &codegenContext, Parser &&parser) {
-  std::vector<std::unique_ptr<Function>> functions;
+static void prepareTopLevelFns(CodegenContext &codegenContext,
+                               Parser &&parser) {
 
   while (!parser.IsEnd()) {
     auto syntax = parser.Read();
@@ -71,19 +70,8 @@ prepareTopLevelFns(CodegenContext &codegenContext, Parser &&parser) {
       continue;
     auto ast = ir1LispTransform(std::move(syntax));
 
-    auto fnAST = dynamic_cast<Function *>(ast.release());
-    if (!fnAST)
-      throw std::runtime_error(
-          "Only function definitions allowed at top level");
-
-    functions.emplace_back(std::make_unique<Function>(std::move(*fnAST)));
+    ast->codegen(codegenContext);
   }
-
-  for (auto &Fptr : functions) {
-    if (!Fptr->codegen(codegenContext).get())
-      throw std::runtime_error("Codegen failed for a function");
-  }
-  return functions;
 }
 
 /*ObjPtr parseTopLevelExpr(ObjPtr body) {
@@ -116,10 +104,8 @@ int main(int argc, char **argv) { // Needs cleanup
   CodegenContext codegenContext;
   InitializeModuleAndManagers(codegenContext);
 
-  std::vector<std::unique_ptr<Function>> functions =
-      prepareTopLevelFns(codegenContext, std::move(parser));
-  codegenContext.lexenv.initGlobalCtors();
-  codegenContext.emitCtors();
+  prepareTopLevelFns(codegenContext, std::move(parser));
+  codegenContext.emitClosuresCtor();
   // auto lispMain = codegenContext.context.module.getFunction("main");
   // if (!lispMain)
   //  throw std::runtime_error("`main` function not found in Lisp code");

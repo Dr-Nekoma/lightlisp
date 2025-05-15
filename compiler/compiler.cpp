@@ -33,19 +33,19 @@ TaggedLLVMVal Variable::codegen(CodegenContext &codegenContext) {
            // environment it would have this exact idxx for this exact variable
     auto curEnv = codegenContext.lexenv.getCurrentEnv();
 
-    auto slotPtr = builder.CreateInBoundsGEP(
-        codegenContext.type_manager.envType, // the Env struct type
-        curEnv,                              // Env*
-        {
-            builder.getInt32(0),  // index into the pointer itself
-            builder.getInt32(1),  // field #1 = slots
-            builder.getInt64(idx) // element in the array
-        },
-        "env.slot.ptr");
+    auto ptrType = codegenContext.type_manager.ptrType;
+    auto slotsPtrPtr = builder.CreateStructGEP(
+        codegenContext.type_manager.envType, curEnv, 1, "env.slots.ptrptr");
 
-    return builder.CreateLoad(codegenContext.type_manager.ptrType, slotPtr,
-                              name_);
+    auto loadedArr = builder.CreateLoad(codegenContext.type_manager.ptrType,
+                                        slotsPtrPtr, "array.ptr");
+    auto pos =
+        builder.CreateInBoundsGEP(ptrType, loadedArr, builder.getInt64(idx));
+    auto valCapture = builder.CreateLoad(ptrType, pos, "debug.Capture");
+
+    return valCapture;
   }
+
   case CodegenContext::SymbolTable::VarStatus::Global: {
     auto global = var.getGlob();
     return builder.CreateLoad(codegenContext.type_manager.ptrType, global,
@@ -140,7 +140,7 @@ TaggedLLVMVal Function::codegen(CodegenContext &codegenContext) {
   llvm::BasicBlock *BB = llvm::BasicBlock::Create(context, "entry", F);
   builder.SetInsertPoint(BB);
 
-  codegenContext.lexenv.enterScope(true);
+  codegenContext.lexenv.enterScope(&*F->arg_begin());
   auto it = F->arg_begin();
   it++;
   for (; it != F->arg_end(); it++) {
@@ -161,14 +161,15 @@ TaggedLLVMVal Function::codegen(CodegenContext &codegenContext) {
 
     // Optimizer::getFPM().run(*F, Optimizer::getFAM());
     auto freeVarsAndNames = codegenContext.lexenv.popFreeVars();
+
     std::vector<llvm::AllocaInst *> freeVars;
     freeVars.reserve((freeVarsAndNames.size()));
     for (auto &[_, inst] : freeVarsAndNames) {
       freeVars.push_back(inst);
     }
 
-    codegenContext.lexenv.addPendingClosure(F, name_, std::move(freeVars),
-                                            args_.size());
+    codegenContext.lexenv.addClosureCtor(F, name_, std::move(freeVars),
+                                         args_.size());
 
     return F;
   }
@@ -354,7 +355,13 @@ TaggedLLVMVal Go::codegen(CodegenContext &codegenContext) {
 
 TaggedLLVMVal Let::codegen(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
-  llvm::Function *currentFn = builder.GetInsertBlock()->getParent();
+  llvm::Function *currentFn;
+  llvm::BasicBlock *previousBB = builder.GetInsertBlock();
+  if (codegenContext.lexenv.isTopLevel()) {
+    currentFn = codegenContext.lexenv.getCtorFn();
+    builder.SetInsertPoint(codegenContext.lexenv.getCtorBlock());
+  }
+  currentFn = builder.GetInsertBlock()->getParent();
 
   // Emit the initializer before adding the variable to scope, this prevents
   // the initializer from referencing the variable itself.
@@ -370,11 +377,12 @@ TaggedLLVMVal Let::codegen(CodegenContext &codegenContext) {
 
   // Remember the old variable binding so that we can restore the binding when
   // we unrecurse.
-  codegenContext.lexenv.enterScope(false);
+  codegenContext.lexenv.enterScope(); // not sure if works
 
   // Remember this binding.
   codegenContext.lexenv.addVar(name_, Alloca);
 
+  builder.SetInsertPoint(previousBB);
   // Codegen the body, now that all vars are in scope.
   llvm::Value *BodyVal = body_->codegen(codegenContext).get();
   if (!BodyVal)

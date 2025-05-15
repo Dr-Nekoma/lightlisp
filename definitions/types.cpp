@@ -114,7 +114,7 @@ void CodegenContext::TypeRegistry::emitCheckType(llvm::Value *val,
   builder.SetInsertPoint(panicBB);
   llvm::Function *panicFn = parent_->lexenv.getBuiltInFn("panic");
 
-  builder.CreateCall(panicFn, {});
+  builder.CreateCall(panicFn, {kind});
 
   builder.CreateUnreachable();
 
@@ -178,6 +178,6 @@ llvm::Type *CodegenContext::TypeRegistry::toLLVMType(BuiltInType type) {
 
 llvm::FunctionType *CodegenContext::TypeRegistry::getStdFnType(size_t args) {
   std::vector<llvm::Type *> types(1 + args, ptrType);
-  types[0] = envType;
+  // types[0] = envType;
   return llvm::FunctionType::get(ptrType, types, false);
 }

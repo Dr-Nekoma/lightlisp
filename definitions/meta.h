@@ -134,7 +134,7 @@ public:
   public:
     SymbolTable(CodegenContext &codegenContext);
 
-    void enterScope(bool isFnScope);
+    void enterScope(llvm::Argument *newEnv = nullptr);
 
     void exitScope(bool isFnScope);
 
@@ -156,7 +156,7 @@ public:
 
     size_t freeVarsSize();
 
-    llvm::Value *getCurrentEnv();
+    llvm::Argument *getCurrentEnv();
 
     std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &tagEnvs();
 
@@ -164,27 +164,17 @@ public:
 
     llvm::Function *getTrapFn();
 
-    void addPendingClosure(llvm::Function *fnPtr, const std::string &fnName,
-                           std::vector<llvm::AllocaInst *> &&freeVars,
-                           size_t arity);
+    llvm::BasicBlock *getCtorBlock();
 
-    void emitPendingClosure(llvm::Value *global, size_t idx);
+    llvm::Function *getCtorFn();
 
-    void initGlobalCtors();
+    llvm::Function *getPrintFn();
+
+    void addClosureCtor(llvm::Function *fnPtr, const std::string &fnName,
+                        std::vector<llvm::AllocaInst *> &&freeVars,
+                        size_t arity);
 
   private:
-    struct PendingClosures {
-      PendingClosures(CodegenContext &codegenContext, llvm::Function *fnPtr,
-                      const std::string &fnName,
-                      std::vector<llvm::AllocaInst *> &&freeVars, size_t arity);
-
-      llvm::Function *fnPtr_;
-      std::string fnName_;
-      std::vector<llvm::AllocaInst *> freeVars_;
-      size_t arity_;
-      llvm::GlobalVariable *fnGlobal_;
-    };
-
     struct EnvManager {
       EnvManager() = default;
 
@@ -194,6 +184,8 @@ public:
     };
 
     llvm::Function *trapFn_;
+
+    llvm::Function *printFn_;
 
     std::unordered_map<std::string, llvm::GlobalVariable *> constantGlobals_;
 
@@ -208,9 +200,10 @@ public:
     std::vector<std::vector<std::pair<std::string, llvm::AllocaInst *>>>
         freeVars_;
 
-    std::vector<llvm::Value *> envStack_;
+    std::vector<llvm::Argument *> envStack_;
 
-    std::vector<PendingClosures> pendingClosures_;
+    llvm::BasicBlock *ctorBlock_;
+    llvm::Function *ctorFn_;
 
     CodegenContext *parent_;
   };
@@ -224,7 +217,7 @@ public:
 
   void addCtor(size_t priority, llvm::Function *ctor);
 
-  void emitCtors();
+  void emitClosuresCtor();
 };
 
 llvm::Value *createClosurecall(CodegenContext &codegenContext,
