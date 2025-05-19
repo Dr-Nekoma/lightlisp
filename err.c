@@ -1,8 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-void panic_code(int code) {
-    fprintf(stderr, "PANIC: error code %d\n", code);
+void panic_code(int code, int proper_code) {
+    fprintf(stderr,
+        "Panic - type %d, while should have been %d",
+        code, proper_code);
     exit(code);
 }
 

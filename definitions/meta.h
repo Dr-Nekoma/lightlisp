@@ -111,7 +111,47 @@ public:
 
     llvm::FunctionType *getStdFnType(size_t args);
 
-    void typeDebug(llvm::Value *val);
+    llvm::Value *makeBox();
+
+    llvm::Value *getValType(llvm::Value *val);
+
+    llvm::Value *getValPL(llvm::Value *val);
+
+    llvm::Value *getEnvSize(llvm::Value *env);
+
+    llvm::Value *getEnvStorage(llvm::Value *env);
+
+    llvm::Value *getClosureEnv(llvm::Value *closure);
+
+    llvm::Value *getClosureFn(llvm::Value *closure);
+
+    llvm::Value *getClosureSize(llvm::Value *closure);
+
+    llvm::Value *loadValType(llvm::Value *val);
+
+    llvm::Value *loadEnvSize(llvm::Value *env);
+
+    llvm::Value *loadEnvStorage(llvm::Value *env);
+
+    llvm::Value *loadClosureEnv(llvm::Value *closure);
+
+    llvm::Value *loadClosureFn(llvm::Value *closure);
+
+    llvm::Value *loadClosureSize(llvm::Value *closure);
+
+    llvm::Value *storeValType(llvm::Value *type, llvm::Value *val);
+
+    llvm::Value *storeValPL(llvm::Value *payload, llvm::Value *val);
+
+    llvm::Value *storeEnvSize(llvm::Value *size, llvm::Value *env);
+
+    llvm::Value *storeEnvStorage(llvm::Value *storage, llvm::Value *env);
+
+    llvm::Value *storeClosureEnv(llvm::Value *env, llvm::Value *closure);
+
+    llvm::Value *storeClosureFn(llvm::Function *fn, llvm::Value *closure);
+
+    llvm::Value *storeClosureSize(llvm::Value *size, llvm::Value *closure);
 
     llvm::PointerType *ptrType;
     llvm::IntegerType *i32Type;
@@ -209,8 +249,6 @@ public:
   };
 
   IRGenContext context;
-  llvm::GlobalVariable *debug;
-  llvm::GlobalVariable *debug2;
   TypeRegistry type_manager;
   Memorymanager memory_manager;
   SymbolTable lexenv;

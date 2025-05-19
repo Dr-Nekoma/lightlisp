@@ -34,13 +34,10 @@ TaggedLLVMVal Variable::codegen(CodegenContext &codegenContext) {
     auto curEnv = codegenContext.lexenv.getCurrentEnv();
 
     auto ptrType = codegenContext.type_manager.ptrType;
-    auto slotsPtrPtr = builder.CreateStructGEP(
-        codegenContext.type_manager.envType, curEnv, 1, "env.slots.ptrptr");
+    auto slotsPtr = codegenContext.type_manager.loadEnvStorage(curEnv);
 
-    auto loadedArr = builder.CreateLoad(codegenContext.type_manager.ptrType,
-                                        slotsPtrPtr, "array.ptr");
     auto pos =
-        builder.CreateInBoundsGEP(ptrType, loadedArr, builder.getInt64(idx));
+        builder.CreateInBoundsGEP(ptrType, slotsPtr, builder.getInt64(idx));
     auto valCapture = builder.CreateLoad(ptrType, pos, "debug.Capture");
 
     return valCapture;
@@ -183,10 +180,8 @@ TaggedLLVMVal Function::codegen(CodegenContext &codegenContext) {
 TaggedLLVMVal Setq::codegen(CodegenContext &codegenContext) {
   // Special case '=' because we don't want to emit the LHS as an expression.
   auto &[context, builder, module] = codegenContext.context;
-  auto LHSE = static_cast<Variable *>(fst_.get());
-  if (!LHSE)
-    throw std::runtime_error("destination of '=' must be a variable");
-  auto name = LHSE->getName();
+
+  auto name = fst_->getName();
   auto [var, status] = codegenContext.lexenv.lookUpVar(name);
 
   llvm::Value *Val = snd_->codegen(codegenContext).get();
@@ -199,25 +194,18 @@ TaggedLLVMVal Setq::codegen(CodegenContext &codegenContext) {
     builder.CreateStore(Val, var.getLocal());
     break;
   case CodegenContext::SymbolTable::VarStatus::Captured: {
-    codegenContext.lexenv.addFreeVar(name_, var.getLocal());
+    codegenContext.lexenv.addFreeVar(name, var.getLocal());
 
-    auto idx = codegenContext.lexenv.freeVarsSize() -
-               1; // idx after I add the var, so that later when we emit the
-                  // environment it would have this exact idx for this exact
-                  // variable
+    auto idx = codegenContext.lexenv.freeVarsSize() - 1;
     auto curEnv = codegenContext.lexenv.getCurrentEnv();
 
-    auto slotPtr = builder.CreateInBoundsGEP(
-        codegenContext.type_manager.envType, // the Env struct type
-        curEnv,                              // Env*
-        {
-            builder.getInt32(0),  // index into the pointer itself
-            builder.getInt32(1),  // field #1 = slots
-            builder.getInt64(idx) // element in the array
-        },
-        "env.slot.ptr");
+    auto ptrType = codegenContext.type_manager.ptrType;
+    auto slotsPtr = codegenContext.type_manager.loadEnvStorage(curEnv);
 
-    builder.CreateStore(Val, slotPtr);
+    auto pos =
+        builder.CreateInBoundsGEP(ptrType, slotsPtr, builder.getInt64(idx));
+
+    builder.CreateStore(Val, pos);
     break;
   }
   case CodegenContext::SymbolTable::VarStatus::Global:
@@ -289,6 +277,18 @@ TaggedLLVMVal Goto::codegen(CodegenContext &codegenContext) {
   llvm::Function *currentFn =
       codegenContext.context.builder.GetInsertBlock()->getParent();
   auto &[context, builder, module] = codegenContext.context;
+
+  auto nonTrivialTags = std::any_of(body_.begin(), body_.end(), [](auto &item) {
+    return std::holds_alternative<std::string>(item);
+  });
+  if (!nonTrivialTags) {
+    llvm::Value *ret;
+    for (auto &item : body_) {
+      auto &expr = std::get<ObjPtr>(item);
+      ret = expr->codegen(codegenContext).get();
+    }
+    return ret;
+  }
 
   auto lastVal = CreateEntryBlockAlloca(
       currentFn, codegenContext.type_manager.ptrType, "tagbody.ret");
@@ -365,19 +365,17 @@ TaggedLLVMVal Let::codegen(CodegenContext &codegenContext) {
 
   // Emit the initializer before adding the variable to scope, this prevents
   // the initializer from referencing the variable itself.
-  llvm::Value *initVal;
-
-  initVal = init_->codegen(codegenContext).get();
+  llvm::Value *initVal = init_->codegen(codegenContext).get();
   if (!initVal)
     return {};
 
-  llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(
+  auto Alloca = CreateEntryBlockAlloca(
       currentFn, codegenContext.type_manager.ptrType, name_);
   builder.CreateStore(initVal, Alloca);
 
   // Remember the old variable binding so that we can restore the binding when
   // we unrecurse.
-  codegenContext.lexenv.enterScope(); // not sure if works
+  codegenContext.lexenv.enterScope();
 
   // Remember this binding.
   codegenContext.lexenv.addVar(name_, Alloca);

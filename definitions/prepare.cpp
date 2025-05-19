@@ -16,7 +16,7 @@ llvm::Function *emitPanic(CodegenContext &codegenContext) {
   auto voidType = llvm::Type::getVoidTy(context);
 
   llvm::FunctionType *FT = llvm::FunctionType::get(
-      voidType, {builder.getInt32Ty()}, /*vararg=*/false);
+      voidType, {builder.getInt32Ty(), builder.getInt32Ty()}, /*vararg=*/false);
   llvm::Function *F = llvm::Function::Create(
       FT, llvm::Function::InternalLinkage, "panic", module);
 
@@ -32,7 +32,11 @@ llvm::Function *emitPanic(CodegenContext &codegenContext) {
       "size");
   builder.CreateCall(codegenContext.memory_manager.getmunmapFn(),
                      {base, sizeVal});
-  builder.CreateCall(codegenContext.lexenv.getTrapFn(), {&*F->arg_begin()});
+  auto it = F->arg_begin();
+  auto errcode = &*it;
+  it++;
+  auto proper_code = &*it;
+  builder.CreateCall(codegenContext.lexenv.getTrapFn(), {errcode, proper_code});
   builder.CreateUnreachable();
   return F;
 }

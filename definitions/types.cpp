@@ -91,8 +91,7 @@ void CodegenContext::TypeRegistry::emitCheckType(llvm::Value *val,
                                                  BuiltInType type) {
   auto &builder = parent_->context.builder;
 
-  auto tdGEP = builder.CreateStructGEP(valueType, val, 0, "type.ptr");
-  auto tdDesc = builder.CreateLoad(ptrType, tdGEP, "type.desc");
+  auto tdDesc = loadValType(val);
 
   auto kindPtr = builder.CreateStructGEP(typeDescType, tdDesc, 1, "kind.ptr");
   auto kind = builder.CreateLoad(i32Type, kindPtr, "kind");
@@ -114,28 +113,16 @@ void CodegenContext::TypeRegistry::emitCheckType(llvm::Value *val,
   builder.SetInsertPoint(panicBB);
   llvm::Function *panicFn = parent_->lexenv.getBuiltInFn("panic");
 
-  builder.CreateCall(panicFn, {kind});
+  builder.CreateCall(panicFn, {kind, builder.getInt32(toKind(type))});
 
   builder.CreateUnreachable();
 
   builder.SetInsertPoint(contBB);
 }
 
-void CodegenContext::TypeRegistry::typeDebug(llvm::Value *val) {
-  auto &builder = parent_->context.builder;
-
-  auto tdGEP = builder.CreateStructGEP(valueType, val, 0, "type.ptr");
-  auto tdDesc = builder.CreateLoad(ptrType, tdGEP, "type.desc");
-
-  auto kindPtr = builder.CreateStructGEP(typeDescType, tdDesc, 1, "kind.ptr");
-  auto kind = builder.CreateLoad(i32Type, kindPtr, "kind");
-  builder.CreateStore(kind, parent_->debug);
-}
-
 llvm::Value *CodegenContext::TypeRegistry::unpackVal(llvm::Value *val,
                                                      BuiltInType type) {
-  auto valPayloadGEP = parent_->context.builder.CreateStructGEP(
-      valueType, val, 1, "val.payload.ptr");
+  auto valPayloadGEP = getValPL(val);
   auto unpackedVal = parent_->context.builder.CreateLoad(
       toLLVMType(type), valPayloadGEP, "val.unboxed");
   return unpackedVal;
@@ -143,21 +130,11 @@ llvm::Value *CodegenContext::TypeRegistry::unpackVal(llvm::Value *val,
 
 llvm::Value *CodegenContext::TypeRegistry::packVal(llvm::Value *val,
                                                    BuiltInType type) {
-
-  auto &builder = parent_->context.builder;
-
-  uint64_t typeSize =
-      parent_->context.module.getDataLayout().getTypeAllocSize(valueType);
-
-  auto boxed = builder.CreateCall(parent_->memory_manager.getArenaAllocator(),
-                                  {builder.getInt64(typeSize)}, "boxedVal");
+  auto boxed = makeBox();
 
   auto typeDescGV = parent_->type_manager.getType(type);
-  auto typeGEP = builder.CreateStructGEP(valueType, boxed, 0, "type.ptr");
-  builder.CreateStore(typeDescGV, typeGEP);
-
-  auto payloadGEP = builder.CreateStructGEP(valueType, boxed, 1, "payload.ptr");
-  builder.CreateStore(val, payloadGEP);
+  storeValType(typeDescGV, boxed);
+  storeValPL(val, boxed);
   return boxed;
 }
 
@@ -180,4 +157,119 @@ llvm::FunctionType *CodegenContext::TypeRegistry::getStdFnType(size_t args) {
   std::vector<llvm::Type *> types(1 + args, ptrType);
   // types[0] = envType;
   return llvm::FunctionType::get(ptrType, types, false);
+}
+
+llvm::Value *CodegenContext::TypeRegistry::makeBox() {
+  uint64_t typeSize =
+      parent_->context.module.getDataLayout().getTypeAllocSize(valueType);
+
+  return parent_->context.builder.CreateCall(
+      parent_->memory_manager.getArenaAllocator(),
+      {parent_->context.builder.getInt64(typeSize)}, "boxedVal");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::getValType(llvm::Value *val) {
+  return parent_->context.builder.CreateStructGEP(valueType, val, 0,
+                                                  "val.type.ptr");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::getValPL(llvm::Value *val) {
+  return parent_->context.builder.CreateStructGEP(valueType, val, 1,
+                                                  "val.payload.ptr");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::getEnvSize(llvm::Value *env) {
+  return parent_->context.builder.CreateStructGEP(envType, env, 0,
+                                                  "env.size.ptr");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::getEnvStorage(llvm::Value *env) {
+  return parent_->context.builder.CreateStructGEP(envType, env, 1,
+                                                  "env.slots.ptr");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::getClosureEnv(llvm::Value *closure) {
+  return parent_->context.builder.CreateStructGEP(closureType, closure, 0,
+                                                  "closure.env.ptr");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::getClosureFn(llvm::Value *closure) {
+  return parent_->context.builder.CreateStructGEP(closureType, closure, 1,
+                                                  "closure.fn.ptr");
+}
+
+llvm::Value *
+CodegenContext::TypeRegistry::getClosureSize(llvm::Value *closure) {
+  return parent_->context.builder.CreateStructGEP(closureType, closure, 2,
+                                                  "closure.size.ptr");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::loadValType(llvm::Value *val) {
+  return parent_->context.builder.CreateLoad(ptrType, getValType(val),
+                                             "val.type");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::loadEnvSize(llvm::Value *env) {
+  return parent_->context.builder.CreateLoad(i64Type, getEnvSize(env),
+                                             "env.size");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::loadEnvStorage(llvm::Value *env) {
+  return parent_->context.builder.CreateLoad(ptrType, getEnvStorage(env),
+                                             "env.storage");
+}
+
+llvm::Value *
+CodegenContext::TypeRegistry::loadClosureEnv(llvm::Value *closure) {
+  return parent_->context.builder.CreateLoad(envType, getClosureEnv(closure),
+                                             "closure.env");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::loadClosureFn(llvm::Value *closure) {
+  return parent_->context.builder.CreateLoad(ptrType, getClosureFn(closure),
+                                             "closure.fn");
+}
+
+llvm::Value *
+CodegenContext::TypeRegistry::loadClosureSize(llvm::Value *closure) {
+  return parent_->context.builder.CreateLoad(i32Type, getClosureSize(closure),
+                                             "closure.size");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::storeValType(llvm::Value *type,
+                                                        llvm::Value *val) {
+  return parent_->context.builder.CreateStore(type, getValType(val));
+}
+
+llvm::Value *CodegenContext::TypeRegistry::storeValPL(llvm::Value *payload,
+                                                      llvm::Value *val) {
+  return parent_->context.builder.CreateStore(payload, getValPL(val));
+}
+
+llvm::Value *CodegenContext::TypeRegistry::storeEnvSize(llvm::Value *size,
+                                                        llvm::Value *env) {
+  return parent_->context.builder.CreateStore(size, getEnvSize(env));
+}
+
+llvm::Value *CodegenContext::TypeRegistry::storeEnvStorage(llvm::Value *storage,
+                                                           llvm::Value *env) {
+  return parent_->context.builder.CreateStore(storage, getEnvStorage(env));
+}
+
+llvm::Value *
+CodegenContext::TypeRegistry::storeClosureEnv(llvm::Value *env,
+                                              llvm::Value *closure) {
+  return parent_->context.builder.CreateStore(env, getClosureEnv(closure));
+}
+
+llvm::Value *
+CodegenContext::TypeRegistry::storeClosureFn(llvm::Function *fn,
+                                             llvm::Value *closure) {
+  return parent_->context.builder.CreateStore(fn, getClosureFn(closure));
+}
+
+llvm::Value *
+CodegenContext::TypeRegistry::storeClosureSize(llvm::Value *size,
+                                               llvm::Value *closure) {
+  return parent_->context.builder.CreateStore(size, getClosureSize(closure));
 }

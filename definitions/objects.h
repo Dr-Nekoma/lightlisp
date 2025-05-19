@@ -162,7 +162,7 @@ private:
 
 class Setq : public Object {
 public:
-  Setq(std::string name, ObjPtr fst, ObjPtr snd)
+  Setq(std::string name, std::unique_ptr<Variable> fst, ObjPtr snd)
       : name_(std::move(name)), fst_(std::move(fst)), snd_(std::move(snd)) {}
 
   [[nodiscard]] const std::string &getName() const { return name_; }
@@ -171,7 +171,7 @@ public:
 
 private:
   std::string name_;
-  ObjPtr fst_;
+  std::unique_ptr<Variable> fst_;
   ObjPtr snd_;
 };
 

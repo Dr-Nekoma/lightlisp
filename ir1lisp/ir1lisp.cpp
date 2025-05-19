@@ -48,11 +48,19 @@ ObjectBuilder::ObjectBuilder() {
                          SyntaxObject *syntax) -> ObjPtr {
     auto view = Cell::ListView(syntax);
     auto it = view.begin();
-    auto fst = codeWalk(builder, *it);
-    it++;
-    auto snd = codeWalk(builder, *it);
-    // assert(cdrCell->get<1>() == nullptr);
-    return std::make_unique<Setq>(name, std::move(fst), std::move(snd));
+    if (auto sym = std::get_if<Symbol>(&*it)) {
+      auto genericVar = codeWalk(builder, *it);
+      if (auto var = dynamic_cast<Variable *>(genericVar.get())) {
+        genericVar.release();
+        auto varFst = std::unique_ptr<Variable>(var);
+        it++;
+        auto snd = codeWalk(builder, *it);
+        // assert(cdrCell->get<1>() == nullptr);
+        return std::make_unique<Setq>(name, std::move(varFst), std::move(snd));
+      }
+      throw std::runtime_error("Cannnot setq what is not a variable");
+    }
+    throw std::runtime_error("Cannnot setq what is not a variable");
   };
 
   builders_["setq"] = setq_builder;

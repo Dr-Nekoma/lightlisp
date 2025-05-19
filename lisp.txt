@@ -1,6 +1,5 @@
-(let abcde 45 
-  (def foo (a)
-    (+ a abcde)))
+(def foo (a b)
+  (+ a b))
 
 (def main ()
-  (foo 10))
+  (foo 14 15))
