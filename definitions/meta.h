@@ -153,6 +153,8 @@ public:
 
     llvm::Value *storeClosureSize(llvm::Value *size, llvm::Value *closure);
 
+    llvm::Value *copyValInto(llvm::Value *src, llvm::Value *dest);
+
     llvm::PointerType *ptrType;
     llvm::IntegerType *i32Type;
     llvm::IntegerType *i64Type;

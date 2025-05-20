@@ -273,3 +273,14 @@ CodegenContext::TypeRegistry::storeClosureSize(llvm::Value *size,
                                                llvm::Value *closure) {
   return parent_->context.builder.CreateStore(size, getClosureSize(closure));
 }
+
+llvm::Value *CodegenContext::TypeRegistry::copyValInto(llvm::Value *src,
+                                                       llvm::Value *dest) {
+  auto typeToStore = loadValType(src);
+  storeValType(typeToStore, dest);
+  auto &builder = parent_->context.builder;
+  auto *i8Arr8Ty = llvm::ArrayType::get(builder.getInt8Ty(), 8);
+  auto srcPLPtr = getValPL(src);
+  auto srcPL = builder.CreateLoad(i8Arr8Ty, srcPLPtr, "raw.payload");
+  return storeValPL(srcPL, dest);
+}

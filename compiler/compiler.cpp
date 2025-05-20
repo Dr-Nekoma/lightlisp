@@ -205,7 +205,9 @@ TaggedLLVMVal Setq::codegen(CodegenContext &codegenContext) {
     auto pos =
         builder.CreateInBoundsGEP(ptrType, slotsPtr, builder.getInt64(idx));
 
-    builder.CreateStore(Val, pos);
+    auto val = builder.CreateLoad(ptrType, pos, "stored.val");
+
+    codegenContext.type_manager.copyValInto(Val, val);
     break;
   }
   case CodegenContext::SymbolTable::VarStatus::Global:

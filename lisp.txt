@@ -1,5 +1,16 @@
-(def foo (a b)
-  (+ a b))
+(let x 45
+  (tagbody
+    (def foo (a)
+      (tagbody
+        (setq x (- x a))))
+      
+    (def bar (a)
+      (setq x (+ x a)))))
 
 (def main ()
-  (foo 14 15))
+  (tagbody 
+    (foo 2)
+    (bar 4)
+    (foo 1)
+    (bar 8)
+    (foo 10)))
