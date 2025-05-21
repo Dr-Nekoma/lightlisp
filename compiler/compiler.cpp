@@ -3,6 +3,17 @@
 #include "objects.h"
 #include "util.h"
 
+/*
+ * Number::codegen - Generate LLVM IR for integer literals
+ *
+ * Converts a Lisp numeric literal to LLVM IR by:
+ * 1. Creating a 64-bit integer constant
+ * 2. Boxing the raw value with appropriate type tagging
+ *
+ * @param codegenContext - Provides LLVM context, builder, module, and type
+ * management
+ * @return TaggedLLVMVal - Boxed integer value as LLVM IR
+ */
 TaggedLLVMVal Number::codegen(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
   llvm::Value *raw = builder.getInt64(value_);
@@ -13,6 +24,21 @@ TaggedLLVMVal Number::codegen(CodegenContext &codegenContext) {
   return boxed;
 }
 
+/*
+ * Variable::codegen - Generate LLVM IR for variable references
+ *
+ * Resolves variable references by:
+ * 1. Checking if the name refers to a built-in function
+ * 2. Looking up the variable in the symbol table
+ * 3. Loading the value based on scope (local, captured, global)
+ *
+ * For captured variables, updates closure environment tracking information.
+ *
+ * @param codegenContext - Provides LLVM context, builder, module, and lexical
+ * environment
+ * @return TaggedLLVMVal - Referenced variable value as LLVM IR
+ * @throws std::runtime_error - If variable not found
+ */
 TaggedLLVMVal Variable::codegen(CodegenContext &codegenContext) {
   if (auto fn = codegenContext.lexenv.getBuiltInFn(name_); fn) {
     return fn;
@@ -53,6 +79,22 @@ TaggedLLVMVal Variable::codegen(CodegenContext &codegenContext) {
   }
 }
 
+/*
+ * Call::codegen - Generate LLVM IR for function calls and closure invocations
+ *
+ * Handles two types of callables:
+ * 1. Direct function calls (built-in or previously compiled functions)
+ * 2. User-defined closures requiring environment handling
+ *
+ * For direct functions, validates argument count and generates call
+ * instruction. For closures, unpacks the closure object and invokes via
+ * createClosurecall().
+ *
+ * @param codegenContext - Provides LLVM context, builder, module, and type
+ * management
+ * @return TaggedLLVMVal - Function call result as LLVM IR
+ * @throws std::runtime_error - If argument count mismatch
+ */
 TaggedLLVMVal Call::codegen(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
   // Look up the name in the global module table.
@@ -101,6 +143,20 @@ llvm::Value *Prototype::codegen(CodegenContext &codegenContext) {
   return F;
 }*/
 
+/*
+ * Function::codegen - Generate LLVM IR for function definitions
+ *
+ * Creates a function that can capture its lexical environment (closure):
+ * 1. Creates an LLVM function with environment pointer as first argument
+ * 2. Sets up entry block and argument allocations
+ * 3. Generates code for function body within a new lexical scope
+ * 4. Records captured variables for closure creation
+ * 5. Registers the closure constructor
+ *
+ * @param codegenContext - Provides LLVM context, builder, module, and lexical
+ * environment
+ * @return TaggedLLVMVal - Function as LLVM IR
+ */
 TaggedLLVMVal Function::codegen(CodegenContext &codegenContext) {
   // First, check for an existing function from a previous 'extern' declaration.
   /*llvm::Function *currentFn =
@@ -123,7 +179,7 @@ TaggedLLVMVal Function::codegen(CodegenContext &codegenContext) {
       llvm::Function::Create(FT, llvm::Function::InternalLinkage,
                              getGlobalFnName(std::string(name_)), module);
 
-  // Set names for all arguments.
+  // First argument is always the environment pointer for closures
   auto &arg = *F->arg_begin();
   arg.setName("_____env");
 
@@ -177,6 +233,19 @@ TaggedLLVMVal Function::codegen(CodegenContext &codegenContext) {
   return {};
 }
 
+/*
+ * Setq::codegen - Generate LLVM IR for variable assignment
+ *
+ * Implements variable assignment based on variable scope:
+ * 1. For local variables - direct store to allocation
+ * 2. For captured variables - update in closure environment
+ * 3. For global variables - update global storage
+ *
+ * @param codegenContext - Provides LLVM context, builder, module, and lexical
+ * environment
+ * @return TaggedLLVMVal - Assigned value (right-hand side) as LLVM IR
+ * @throws std::runtime_error - If variable not found
+ */
 TaggedLLVMVal Setq::codegen(CodegenContext &codegenContext) {
   // Special case '=' because we don't want to emit the LHS as an expression.
   auto &[context, builder, module] = codegenContext.context;
@@ -220,6 +289,18 @@ TaggedLLVMVal Setq::codegen(CodegenContext &codegenContext) {
   return Val;
 }
 
+/*
+ * If::codegen - Generate LLVM IR for conditional expressions
+ *
+ * Implements if-then-else control flow:
+ * 1. Generates and unpacks condition value
+ * 2. Creates basic blocks for then, else, and merge points
+ * 3. Generates code for both branches
+ * 4. Uses PHI node to select the correct result value
+ *
+ * @param codegenContext - Provides LLVM context, builder, module
+ * @return TaggedLLVMVal - Result of selected branch as LLVM IR
+ */
 TaggedLLVMVal If::codegen(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
 
@@ -275,11 +356,25 @@ TaggedLLVMVal If::codegen(CodegenContext &codegenContext) {
   return PN;
 }
 
+/*
+ * Goto::codegen - Generate LLVM IR for tagbody construct
+ *
+ * Implements the Lisp tagbody construct that allows non-local jumps:
+ * 1. Creates basic blocks for each tag
+ * 2. Sets up storage to track the last evaluated expression
+ * 3. Generates code for expressions in body, interleaved with tag points
+ * 4. Preserves the value of the last evaluated expression
+ *
+ * @param codegenContext - Provides LLVM context, builder, module, and lexical
+ * environment
+ * @return TaggedLLVMVal - Value of last evaluated expression in body
+ */
 TaggedLLVMVal Goto::codegen(CodegenContext &codegenContext) {
   llvm::Function *currentFn =
       codegenContext.context.builder.GetInsertBlock()->getParent();
   auto &[context, builder, module] = codegenContext.context;
 
+  // Check if this is a simple sequential body with no tags
   auto nonTrivialTags = std::any_of(body_.begin(), body_.end(), [](auto &item) {
     return std::holds_alternative<std::string>(item);
   });
@@ -292,6 +387,7 @@ TaggedLLVMVal Goto::codegen(CodegenContext &codegenContext) {
     return ret;
   }
 
+  // Storage for preserving the last evaluated expression value
   auto lastVal = CreateEntryBlockAlloca(
       currentFn, codegenContext.type_manager.ptrType, "tagbody.ret");
 
@@ -336,6 +432,18 @@ TaggedLLVMVal Goto::codegen(CodegenContext &codegenContext) {
   return last;
 }
 
+/*
+ * Go::codegen - Generate LLVM IR for go expression (jump to tag)
+ *
+ * Implements jumps to tags defined in enclosing tagbody constructs:
+ * 1. Searches for target tag in lexical environment
+ * 2. Creates unconditional branch to the tag's basic block
+ *
+ * @param codegenContext - Provides LLVM context, builder, module, and lexical
+ * environment
+ * @return TaggedLLVMVal - Empty value (control flow never returns)
+ * @throws std::runtime_error - If target tag not found
+ */
 TaggedLLVMVal Go::codegen(CodegenContext &codegenContext) {
   llvm::BasicBlock *dest = nullptr;
   for (auto env = codegenContext.lexenv.tagEnvs().rbegin();
@@ -355,6 +463,20 @@ TaggedLLVMVal Go::codegen(CodegenContext &codegenContext) {
   return {};
 }
 
+/*
+ * Let::codegen - Generate LLVM IR for local variable binding
+ *
+ * Implements local variable binding with initialization:
+ * 1. Generates code for initializer expression
+ * 2. Allocates storage for local variable
+ * 3. Creates new lexical scope with the bound variable
+ * 4. Generates code for body expression in new scope
+ * 5. Restores previous lexical scope
+ *
+ * @param codegenContext - Provides LLVM context, builder, module, and lexical
+ * environment
+ * @return TaggedLLVMVal - Result of body expression as LLVM IR
+ */
 TaggedLLVMVal Let::codegen(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
   llvm::Function *currentFn;
