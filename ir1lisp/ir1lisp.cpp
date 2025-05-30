@@ -173,8 +173,14 @@ ObjPtr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax) {
         return std::make_unique<Call>(std::move(callee), std::move(args));
       }
     } else {
-      // for now
-      throw std::runtime_error("Lambdas not yet supported");
+      // should be now
+      auto &body = cell.get<1>(); // can be nullptr
+      if (body && !std::holds_alternative<Cell>(*body)) {
+        throw std::runtime_error("Imporper syntax");
+      }
+      auto callee = codeWalk(builder, fstObj);
+      auto args = lispListToVec(builder, body.get());
+      return std::make_unique<Call>(std::move(callee), std::move(args));
     }
   }
 }
