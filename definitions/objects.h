@@ -375,7 +375,7 @@ private:
  * environment (closures). Generates LLVM functions with environment
  * parameters and handles free variable capture.
  */
-class Function : public Object {
+class Def : public Object {
 public:
   /*
    * Construct a Function node
@@ -384,9 +384,8 @@ public:
    * @param args - Parameter names
    * @param body - Body expression of the function
    */
-  Function(std::string &&name, std::vector<std::string> &&args, ObjPtr body)
-      : name_(std::move(name)), args_(std::move(args)), body_(std::move(body)) {
-  }
+  Def(std::unique_ptr<Variable> var, ObjPtr init)
+      : var_(std::move(var)), init_(std::move(init)) {}
 
   /*
    * Function::codegen - Generate LLVM IR for function definitions
@@ -405,9 +404,8 @@ public:
   TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::string name_;              // Function name
-  std::vector<std::string> args_; // Parameter names
-  ObjPtr body_;                   // Function body expression
+  std::unique_ptr<Variable> var_; // Variable node for LHS
+  ObjPtr init_;                   // Initialization expression
 };
 
 /*
@@ -426,15 +424,8 @@ public:
    * @param fst - Variable node for the left-hand side
    * @param snd - Expression for the right-hand side value
    */
-  Setq(std::string name, std::unique_ptr<Variable> fst, ObjPtr snd)
-      : name_(std::move(name)), fst_(std::move(fst)), snd_(std::move(snd)) {}
-
-  /*
-   * Get the variable name being assigned
-   *
-   * @return const string& - Reference to the variable name
-   */
-  [[nodiscard]] const std::string &getName() const { return name_; }
+  Setq(std::unique_ptr<Variable> var, ObjPtr newval)
+      : var_(std::move(var)), newval_(std::move(newval)) {}
 
   /*
    * Setq::codegen - Generate LLVM IR for variable assignment
@@ -452,11 +443,21 @@ public:
   TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::string name_;              // Name of variable being assigned
-  std::unique_ptr<Variable> fst_; // Variable node for LHS
-  ObjPtr snd_;                    // Value expression for RHS
+  std::unique_ptr<Variable> var_; // Variable node for LHS
+  ObjPtr newval_;                 // Value expression for RHS
 };
 
+class Lambda : public Object {
+public:
+  Lambda(std::vector<std::string> &&args, ObjPtr body)
+      : args_(std::move(args)), body_(std::move(body)) {}
+
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+
+private:
+  std::vector<std::string> args_; // Parameter names
+  ObjPtr body_;                   // Function body expression
+};
 /*
  * If - AST node for conditional expressions
  *
@@ -577,9 +578,8 @@ public:
    * @param init - Expression to initialize the variable
    * @param body - Expression to evaluate with the variable in scope
    */
-  Let(std::string &&name, ObjPtr init, ObjPtr body)
-      : name_(std::move(name)), init_(std::move(init)), body_(std::move(body)) {
-  }
+  Let(std::unique_ptr<Variable> var, ObjPtr init, ObjPtr body)
+      : var_(std::move(var)), init_(std::move(init)), body_(std::move(body)) {}
 
   /*
    * Let::codegen - Generate LLVM IR for local variable binding
@@ -598,7 +598,7 @@ public:
   TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::string name_; // Name of the variable to bind
-  ObjPtr init_;      // Initialization expression
-  ObjPtr body_;      // Body expression with variable in scope
+  std::unique_ptr<Variable> var_; // Variable node for LHS
+  ObjPtr init_;                   // Initialization expression
+  ObjPtr body_;                   // Body expression with variable in scope
 };

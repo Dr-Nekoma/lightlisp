@@ -17,34 +17,7 @@ ObjectBuilder::ObjectBuilder() {
   };
   builders_["if"] = if_builder;
 
-  auto def_builder = [](ObjectBuilder &builder, std::string &,
-                        SyntaxObject *syntax) -> ObjPtr {
-    auto view = Cell::ListView(syntax);
-    auto it = view.begin();
-    std::string name;
-    if (auto sym = std::get_if<Symbol>(&*it)) {
-      name = sym->getName();
-      if (name == "main")
-        name = "lisp_main";
-    } else {
-      throw std::runtime_error("bad function name");
-    }
-    it++;
-    auto maybeCell = it.getCell();
-    if (auto cell = std::get_if<Cell>(maybeCell)) {
-      auto argVec = parseArgList(cell->get<0>().get());
-      it++;
-      auto body = codeWalk(builder, *it);
-      return std::make_unique<Function>(std::move(name), std::move(argVec),
-                                        std::move(body));
-    } else {
-      throw std::runtime_error("Arg list is not a list");
-    }
-  };
-
-  builders_["def"] = def_builder;
-
-  auto setq_builder = [](ObjectBuilder &builder, std::string &name,
+  auto setq_builder = [](ObjectBuilder &builder, std::string &,
                          SyntaxObject *syntax) -> ObjPtr {
     auto view = Cell::ListView(syntax);
     auto it = view.begin();
@@ -56,7 +29,7 @@ ObjectBuilder::ObjectBuilder() {
         it++;
         auto snd = codeWalk(builder, *it);
         // assert(cdrCell->get<1>() == nullptr);
-        return std::make_unique<Setq>(name, std::move(varFst), std::move(snd));
+        return std::make_unique<Setq>(std::move(varFst), std::move(snd));
       }
       throw std::runtime_error("Cannnot setq what is not a variable");
     }
@@ -94,24 +67,53 @@ ObjectBuilder::ObjectBuilder() {
 
   builders_["go"] = go_builder;
 
-  auto let_builder = [](ObjectBuilder &builder, std::string &name,
-                        SyntaxObject *syntax) -> ObjPtr {
+  auto decl_builder = [](ObjectBuilder &builder, std::string &name,
+                         SyntaxObject *syntax) -> ObjPtr {
     auto view = Cell::ListView(syntax);
     auto it = view.begin();
     if (auto sym = std::get_if<Symbol>(&*it)) {
-      auto name = sym->getName();
-      it++;
-      auto init = codeWalk(builder, *it);
-      it++;
-      auto body = codeWalk(builder, *it);
-      return std::make_unique<Let>(std::move(name), std::move(init),
-                                   std::move(body));
+      auto genericVar = codeWalk(builder, *it);
+      if (auto var = dynamic_cast<Variable *>(genericVar.get())) {
+        genericVar.release();
+        auto varFst = std::unique_ptr<Variable>(var);
+        it++;
+        auto init = codeWalk(builder, *it);
+        if (name == "def") {
+          return std::make_unique<Def>(std::move(varFst), std::move(init));
+        }
+        it++;
+        auto body = codeWalk(builder, *it);
+
+        return std::make_unique<Let>(std::move(varFst), std::move(init),
+                                     std::move(body));
+      } else {
+        throw std::runtime_error("Declaration has to be for variable");
+      }
     } else {
       throw std::runtime_error("Non symbol cannot be a variable name");
     }
   };
 
-  builders_["let"] = let_builder;
+  builders_["let"] = decl_builder;
+
+  builders_["def"] = decl_builder;
+
+  auto lambda_builder = [](ObjectBuilder &builder, std::string &,
+                           SyntaxObject *syntax) -> ObjPtr {
+    auto view = Cell::ListView(syntax);
+    auto it = view.begin();
+    auto maybeCell = it.getCell();
+    if (auto cell = std::get_if<Cell>(maybeCell)) {
+      auto argVec = parseArgList(cell->get<0>().get());
+      it++;
+      auto body = codeWalk(builder, *it);
+      return std::make_unique<Lambda>(std::move(argVec), std::move(body));
+    } else {
+      throw std::runtime_error("Arg list is not a list");
+    }
+  };
+
+  builders_["lambda"] = lambda_builder;
 }
 
 std::vector<std::string> parseArgList(SyntaxObject *syntax) {

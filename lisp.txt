@@ -1,16 +1,10 @@
-(let x 45
-  (tagbody
-    (def foo (a)
-      (tagbody
-        (setq x (- x a))))
-      
-    (def bar (a)
-      (setq x (+ x a)))))
+(def foo (lambda (a)
+           a))
 
-(def main ()
-  (tagbody 
-    (foo 2)
-    (bar 4)
-    (foo 1)
-    (bar 8)
-    (foo 10)))
+(def bar (lambda (x)
+           (lambda (y)
+             (+ x y))))           
+
+(def lisp_main (lambda ()
+                 (let b (bar 5)
+                   (* (foo 2) (b 9)))))

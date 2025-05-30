@@ -123,8 +123,6 @@ void CodegenContext::SymbolTable::exitScope(bool isFnScope) {
   }
 }
 
-bool CodegenContext::SymbolTable::isTopLevel() { return envStack_.empty(); }
-
 void CodegenContext::SymbolTable::addVar(const std::string &name,
                                          llvm::AllocaInst *inst) {
   named_values_.env_stack.back().emplace(name, inst);
@@ -221,24 +219,56 @@ llvm::Function *CodegenContext::SymbolTable::getPrintFn() { return printFn_; }
 
 llvm::Function *CodegenContext::SymbolTable::getCtorFn() { return ctorFn_; }
 
-void CodegenContext::SymbolTable::addClosureCtor(
-    llvm::Function *fnPtr, const std::string &fnName,
-    std::vector<llvm::AllocaInst *> &&freeVars, size_t arity) {
+/*
+llvm::BasicBlock *CodegenContext::SymbolTable::getCurContextBlock() {
+  return isDef_ ? ctorBlock_ : parent_->context.builder.GetInsertBlock();
+}
+
+llvm::Function *CodegenContext::SymbolTable::getCurCtorFn() {
+  return isDef_ ? ctorFn_
+                : parent_->context.builder.GetInsertBlock()->getParent();
+?????????
+}
+*/
+void CodegenContext::SymbolTable::setFnWrapperParameters(
+    std::vector<llvm::AllocaInst *> &&vars, size_t size) {
+  curFreeVars_ = vars;
+  curArgSize_ = size;
+}
+
+void CodegenContext::SymbolTable::setInsertBlock(llvm::BasicBlock *block,
+                                                 bool descend) {
+  if (descend)
+    insertBlocks_.push_back(block);
+  else if (!insertBlocks_.empty()) // A HACK FIXME TODO
+    insertBlocks_.back() = block;
+  parent_->context.builder.SetInsertPoint(block);
+}
+
+llvm::BasicBlock *CodegenContext::SymbolTable::getCurrentBlock() {
+  return insertBlocks_.empty() ? ctorBlock_ : insertBlocks_.back();
+}
+
+void CodegenContext::SymbolTable::ascend() {
+  insertBlocks_.pop_back();
+  parent_->context.builder.SetInsertPoint(getCurrentBlock());
+}
+
+llvm::Value *
+CodegenContext::SymbolTable::constructClosureWrapper(llvm::Function *fnPtr) {
   auto &codegenContext = *parent_;
   auto &[context, builder, module] = codegenContext.context;
   auto ptrType = codegenContext.type_manager.ptrType;
   auto closureType = codegenContext.type_manager.closureType;
-  auto envType = codegenContext.type_manager.envType;
   auto &dataL = module.getDataLayout();
 
-  auto fnGlobal = new llvm::GlobalVariable(
-      codegenContext.context.module, codegenContext.type_manager.ptrType,
-      /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
-      llvm::Constant::getNullValue(codegenContext.type_manager.ptrType),
-      fnName);
-  addVar(fnName, fnGlobal);
+  auto freeVars = std::move(curFreeVars_.value());
+  auto arity = std::move(curArgSize_.value());
+  curFreeVars_.reset();
+  curArgSize_.reset();
 
-  builder.SetInsertPoint(ctorBlock_);
+  // codegenContext.lexenv.setInsertBlock(getCurrentBlock(), false);
+
   auto freeVarsSize = freeVars.size();
 
   auto closureTypeSize = dataL.getTypeAllocSize(closureType);
@@ -246,7 +276,7 @@ void CodegenContext::SymbolTable::addClosureCtor(
   auto closureBoxed =
       builder.CreateCall(codegenContext.memory_manager.getArenaAllocator(),
                          {builder.getInt64(closureTypeSize)}, "closureVal");
-  // no bit cast
+
   auto envGEP = codegenContext.type_manager.getClosureEnv(closureBoxed);
 
   uint64_t slotsSize = freeVarsSize * dataL.getTypeAllocSize(ptrType);
@@ -273,7 +303,7 @@ void CodegenContext::SymbolTable::addClosureCtor(
                                                closureBoxed);
 
   auto boxed = codegenContext.type_manager.packVal(closureBoxed, Type::Fn);
-  builder.CreateStore(boxed, fnGlobal);
+  return boxed;
 }
 
 llvm::Value *createClosurecall(CodegenContext &codegenContext,

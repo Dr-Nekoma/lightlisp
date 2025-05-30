@@ -110,14 +110,14 @@ void CodegenContext::TypeRegistry::emitCheckType(llvm::Value *val,
 
   builder.CreateCondBr(isInt, contBB, panicBB);
 
-  builder.SetInsertPoint(panicBB);
+  parent_->lexenv.setInsertBlock(panicBB, false);
   llvm::Function *panicFn = parent_->lexenv.getBuiltInFn("panic");
 
   builder.CreateCall(panicFn, {kind, builder.getInt32(toKind(type))});
 
   builder.CreateUnreachable();
 
-  builder.SetInsertPoint(contBB);
+  parent_->lexenv.setInsertBlock(contBB, false);
 }
 
 llvm::Value *CodegenContext::TypeRegistry::unpackVal(llvm::Value *val,

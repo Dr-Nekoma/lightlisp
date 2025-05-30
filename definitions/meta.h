@@ -686,14 +686,22 @@ public:
      * Sets up the code to build a closure at runtime, including
      * capturing free variables.
      *
+     * @param fnVar - Variable for the function value, global or local
      * @param fnPtr - Function pointer for the closure body
      * @param fnName - Name of the function
      * @param freeVars - Variables captured from outer scopes
      * @param arity - Number of arguments the function takes
      */
-    void addClosureCtor(llvm::Function *fnPtr, const std::string &fnName,
-                        std::vector<llvm::AllocaInst *> &&freeVars,
-                        size_t arity);
+    llvm::Value *constructClosureWrapper(llvm::Function *fnPtr);
+
+    void setFnWrapperParameters(std::vector<llvm::AllocaInst *> &&vars,
+                                size_t size);
+
+    void setInsertBlock(llvm::BasicBlock *block, bool descend);
+
+    llvm::BasicBlock *getCurrentBlock();
+
+    void ascend();
 
   private:
     /*
@@ -738,7 +746,11 @@ public:
     std::vector<llvm::Argument *> envStack_;
 
     llvm::BasicBlock *ctorBlock_; // Block for initialization code
-    llvm::Function *ctorFn_;      // Function for initialization
+    std::vector<llvm::BasicBlock *> insertBlocks_;
+    llvm::Function *ctorFn_; // Function for initialization
+
+    std::optional<std::vector<llvm::AllocaInst *>> curFreeVars_;
+    std::optional<size_t> curArgSize_;
 
     CodegenContext *parent_; // Parent context
   };
