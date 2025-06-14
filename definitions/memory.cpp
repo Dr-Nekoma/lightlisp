@@ -2,7 +2,7 @@
 
 CodegenContext::Memorymanager::Memorymanager(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
-  auto i8Ptr = llvm::PointerType::get(llvm::IntegerType::get(context, 8), 0);
+  auto i8Ptr = llvm::PointerType::get(context, 0);
   auto i64Ty = llvm::Type::getInt64Ty(context);
   auto i32Ty = llvm::Type::getInt32Ty(context);
 
@@ -156,8 +156,7 @@ void CodegenContext::Memorymanager::prepareArena(
 
 void CodegenContext::Memorymanager::munmapArena(IRGenContext &irgc) {
   auto &builder = irgc.builder;
-  auto i8Ptr =
-      llvm::PointerType::get(llvm::IntegerType::get(irgc.context, 8), 0);
+  auto i8Ptr = llvm::PointerType::get(irgc.context, 0);
 
   auto base = builder.CreateLoad(i8Ptr, getArenaPtrGV(), "base");
   auto sizeVal2 =

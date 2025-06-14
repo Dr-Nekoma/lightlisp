@@ -105,17 +105,18 @@ TaggedLLVMVal Def::codegen(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
   auto &name = var_->getName();
 
-  auto initVal = init_->codegen(codegenContext).get();
-
-  if (!initVal)
-    return {};
-
   auto global = new llvm::GlobalVariable(
       codegenContext.context.module, codegenContext.type_manager.ptrType,
       /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
       llvm::Constant::getNullValue(codegenContext.type_manager.ptrType), name);
 
   codegenContext.lexenv.addVar(name, global);
+
+  auto initVal = init_->codegen(codegenContext).get();
+
+  if (!initVal)
+    return {};
+
   builder.CreateStore(initVal, global);
 
   return global;
@@ -172,12 +173,7 @@ TaggedLLVMVal If::codegen(CodegenContext &codegenContext) {
   if (!condBoxed)
     return {};
 
-  auto rawCond =
-      codegenContext.type_manager.checkAndUnpack(condBoxed, Type::Int);
-
-  // Compare i64 != 0 → i1
-  llvm::Value *condI1 =
-      builder.CreateICmpNE(rawCond, builder.getInt64(0), "ifcond");
+  llvm::Value *condI1 = codegenContext.type_manager.emitTrueCheck(condBoxed);
 
   llvm::Function *currentFn = builder.GetInsertBlock()->getParent();
   llvm::BasicBlock *ThenBB =

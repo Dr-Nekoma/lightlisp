@@ -83,7 +83,6 @@ std::unique_ptr<SyntaxObject> Parser::ReadList() {
 }
 
 std::unique_ptr<SyntaxObject> Parser::Read() {
-  // tokenizer_.Next();
   auto ret = ReadProper();
   return ret;
 }

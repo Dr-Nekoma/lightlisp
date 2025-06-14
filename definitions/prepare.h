@@ -171,3 +171,6 @@ llvm::Function *emitCar(CodegenContext &codegenContext);
  * @return Function* - Generated cdr accessor function
  */
 llvm::Function *emitCdr(CodegenContext &codegenContext);
+
+llvm::Function *emitSetCar(CodegenContext &codegenContext);
+llvm::Function *emitSetCdr(CodegenContext &codegenContext);

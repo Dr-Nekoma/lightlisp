@@ -18,6 +18,8 @@ CodegenContext::TypeRegistry::TypeRegistry(CodegenContext &context)
   createBuiltinTypeDescVar(Type::Fn);
   createBuiltinTypeDescVar(Type::Int);
   createBuiltinTypeDescVar(Type::Cons);
+  createBuiltinTypeDescVar(Type::Null);
+  createBuiltinTypeDescVar(Type::T);
 }
 
 llvm::StructType *
@@ -67,6 +69,10 @@ int CodegenContext::TypeRegistry::toKind(BuiltInType type) {
     return 1;
   case CodegenContext::TypeRegistry::BuiltInType::Fn:
     return -1;
+  case CodegenContext::TypeRegistry::BuiltInType::Null:
+    return -2;
+  case CodegenContext::TypeRegistry::BuiltInType::T:
+    return 10;
   }
 }
 
@@ -82,6 +88,14 @@ std::string &CodegenContext::TypeRegistry::toStrName(BuiltInType type) {
   }
   case CodegenContext::TypeRegistry::BuiltInType::Fn: {
     static std::string fnName("Fn");
+    return fnName;
+  }
+  case CodegenContext::TypeRegistry::BuiltInType::Null: {
+    static std::string fnName("Null");
+    return fnName;
+  }
+  case CodegenContext::TypeRegistry::BuiltInType::T: {
+    static std::string fnName("T");
     return fnName;
   }
   }
@@ -283,4 +297,19 @@ llvm::Value *CodegenContext::TypeRegistry::copyValInto(llvm::Value *src,
   auto srcPLPtr = getValPL(src);
   auto srcPL = builder.CreateLoad(i8Arr8Ty, srcPLPtr, "raw.payload");
   return storeValPL(srcPL, dest);
+}
+
+llvm::Value *CodegenContext::TypeRegistry::emitTrueCheck(llvm::Value *what) {
+  return parent_->context.builder.CreateNot(emitTypeCheck(what, Type::Null),
+                                            "inverse.cond");
+}
+
+llvm::Value *CodegenContext::TypeRegistry::emitTypeCheck(llvm::Value *what,
+                                                         BuiltInType type) {
+  auto valtype = loadValType(what);
+
+  llvm::Value *cond = parent_->context.builder.CreateICmpEQ(
+      valtype, getType(type), "type.check.cond");
+
+  return cond;
 }

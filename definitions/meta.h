@@ -1,14 +1,8 @@
 #pragma once
-#include <algorithm>
 #include <concepts>
-#include <cstdint>
-#include <functional>
-#include <istream>
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <string_view>
-#include <sys/stat.h>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -228,7 +222,7 @@ public:
      * - Cons: Cons cells (pairs)
      * - Fn: Function values (closures)
      */
-    enum class BuiltInType { Int, Cons, Fn };
+    enum class BuiltInType { Int, Cons, Fn, Null, T };
 
     /*
      * Get the global variable for a type descriptor
@@ -496,6 +490,9 @@ public:
      */
     llvm::Value *copyValInto(llvm::Value *src, llvm::Value *dest);
 
+    llvm::Value *emitTrueCheck(llvm::Value *what);
+    llvm::Value *emitTypeCheck(llvm::Value *what, BuiltInType type);
+
     // Common LLVM types used throughout the compiler
     llvm::PointerType *ptrType;     // Generic pointer type (i8*)
     llvm::IntegerType *i32Type;     // 32-bit integer type
@@ -623,6 +620,8 @@ public:
      * @return pair<VarInst, VarStatus> - Variable instance and status
      */
     std::pair<VarInst, VarStatus> lookUpVar(const std::string &name);
+
+    llvm::GlobalVariable *getConstGlobal(const std::string &name);
 
     /*
      * Get the number of free variables in the current closure
@@ -800,4 +799,6 @@ namespace Type {
 const auto Int = CodegenContext::TypeRegistry::BuiltInType::Int;
 const auto Cons = CodegenContext::TypeRegistry::BuiltInType::Cons;
 const auto Fn = CodegenContext::TypeRegistry::BuiltInType::Fn;
+const auto Null = CodegenContext::TypeRegistry::BuiltInType::Null;
+const auto T = CodegenContext::TypeRegistry::BuiltInType::T;
 } // namespace Type

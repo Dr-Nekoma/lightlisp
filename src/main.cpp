@@ -3,13 +3,15 @@
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/TargetParser/Triple.h"
 #include <llvm/Support/FileSystem.h>
 #include <llvm/TargetParser/Host.h>
 
 #include <fstream>
 
 int genObjectFile(CodegenContext &codegenContext) {
-  auto TargetTriple = llvm::sys::getDefaultTargetTriple();
+  auto TargetTripleStr = llvm::sys::getDefaultTargetTriple();
+  llvm::Triple TargetTriple(TargetTripleStr);
 
   llvm::InitializeAllTargetInfos();
   llvm::InitializeAllTargets();
@@ -28,8 +30,8 @@ int genObjectFile(CodegenContext &codegenContext) {
     return 1;
   }
 
-  auto CPU = "generic";
-  auto Features = "";
+  const auto CPU = "generic";
+  const auto Features = "";
 
   llvm::TargetOptions opt;
   auto TargetMachine = Target->createTargetMachine(TargetTriple, CPU, Features,
@@ -39,7 +41,7 @@ int genObjectFile(CodegenContext &codegenContext) {
       TargetMachine->createDataLayout());
   codegenContext.context.module.setTargetTriple(TargetTriple);
 
-  auto Filename = "lisp.o";
+  const auto Filename = "lisp.o";
   std::error_code EC;
   llvm::raw_fd_ostream dest(Filename, EC, llvm::sys::fs::OF_None);
 
@@ -90,7 +92,7 @@ int main(int argc, char **argv) { // Needs cleanup
     llvm::errs() << "Usage: " << argv[0] << " <input-file>\n";
     return 1;
   }
-  std::string filename = argv[1];
+  const std::string filename = argv[1];
 
   std::ifstream my_lisp(filename);
   if (!my_lisp) {

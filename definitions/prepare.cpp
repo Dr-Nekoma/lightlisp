@@ -136,3 +136,59 @@ llvm::Function *emitCdr(CodegenContext &codegenContext) {
 
   return F;
 }
+
+llvm::Function *emitSetCar(CodegenContext &codegenContext) {
+  auto ptrType = codegenContext.type_manager.ptrType;
+  auto consType = codegenContext.type_manager.consType;
+  auto &[context, builder, module] = codegenContext.context;
+
+  llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, {ptrType, ptrType},
+                                                   /*vararg=*/false);
+  llvm::Function *F = llvm::Function::Create(
+      FT, llvm::Function::InternalLinkage, getBuiltInName("setcar"), module);
+
+  auto it = F->arg_begin();
+  it->setName("cons");
+  it++;
+  it->setName("newval");
+
+  auto BB = llvm::BasicBlock::Create(context, "entry", F);
+  builder.SetInsertPoint(BB);
+
+  it = F->arg_begin();
+
+  llvm::Value *valPayloadGEP =
+      builder.CreateStructGEP(consType, &*it, 0, "cons.car");
+  it++;
+  builder.CreateStore(&*it, valPayloadGEP);
+  builder.CreateRet(&*it);
+  return F;
+}
+
+llvm::Function *emitSetCdr(CodegenContext &codegenContext) {
+  auto ptrType = codegenContext.type_manager.ptrType;
+  auto consType = codegenContext.type_manager.consType;
+  auto &[context, builder, module] = codegenContext.context;
+
+  llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, {ptrType, ptrType},
+                                                   /*vararg=*/false);
+  llvm::Function *F = llvm::Function::Create(
+      FT, llvm::Function::InternalLinkage, getBuiltInName("setcdr"), module);
+
+  auto it = F->arg_begin();
+  it->setName("cons");
+  it++;
+  it->setName("newval");
+
+  auto BB = llvm::BasicBlock::Create(context, "entry", F);
+  builder.SetInsertPoint(BB);
+
+  it = F->arg_begin();
+
+  llvm::Value *valPayloadGEP =
+      builder.CreateStructGEP(consType, &*it, 1, "cons.cdr");
+  it++;
+  builder.CreateStore(&*it, valPayloadGEP);
+  builder.CreateRet(&*it);
+  return F;
+}

@@ -1,7 +1,7 @@
-(def foo (lambda (a)
-           a))         
+(def foo (lambda (x)
+           (if (> x 5)
+               x
+               (+ 1 (foo (+ x 1))))))
 
 (def lisp_main (lambda ()
-                 (* (foo 2) (((lambda (x)
-                                (lambda (y)
-                                  (+ x y))) 5) 9))))
+                 (foo 0)))
