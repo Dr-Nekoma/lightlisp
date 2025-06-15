@@ -68,9 +68,10 @@ void InitializeModuleAndManagers(CodegenContext &codegenContext) {
   Optimizer::getFPM().addPass(llvm::ReassociatePass());
 
   // Register analysis passes used in these transform passes.
-  llvm::PassBuilder PB;
+  /*llvm::PassBuilder PB;
   PB.registerModuleAnalyses(Optimizer::getMAM());
   PB.registerFunctionAnalyses(Optimizer::getFAM());
   PB.crossRegisterProxies(Optimizer::getLAM(), Optimizer::getFAM(),
                           Optimizer::getCGAM(), Optimizer::getMAM());
+                          */
 }

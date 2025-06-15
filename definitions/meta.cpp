@@ -3,53 +3,114 @@
 #include "util.h"
 
 CodegenContext::CodegenContext()
-    : context(), memory_manager(context), type_manager(context), lexenv(*this) {
-}
+    : context(), type_manager(*this), memory_manager(*this), lexenv(*this) {}
 
 CodegenContext::IRGenContext::IRGenContext()
     : context(llvm::LLVMContext()), builder(llvm::IRBuilder<>(context)),
       module(llvm::Module("my lisp", context)) {}
 
 CodegenContext::SymbolTable::SymbolTable(CodegenContext &codegenContext)
-    : trapFn_(llvm::Intrinsic::getDeclaration(&codegenContext.context.module,
-                                              llvm::Intrinsic::trap)),
-      parent_(&codegenContext) {
+    : parent_(&codegenContext) {
 
+  auto &[context, builder, module] = codegenContext.context;
+
+  llvm::FunctionType *trapFT = llvm::FunctionType::get(
+      builder.getVoidTy(), {builder.getInt32Ty(), builder.getInt32Ty()}, false);
+  trapFn_ = llvm::Function::Create(trapFT, llvm::Function::ExternalLinkage,
+                                   "panic_code", module);
+
+  llvm::FunctionType *printFT = llvm::FunctionType::get(
+      builder.getVoidTy(), {builder.getInt64Ty()}, false);
+  printFn_ = llvm::Function::Create(printFT, llvm::Function::ExternalLinkage,
+                                    "print_int", module);
+
+  auto zeroPayload = llvm::ConstantAggregateZero::get(
+      llvm::ArrayType::get(parent_->context.builder.getInt8Ty(), 8));
+  auto init = llvm::ConstantStruct::get(
+      parent_->type_manager.valueType,
+      {parent_->type_manager.getType(Type::Null), zeroPayload});
+  constantGlobals_.emplace(
+      "nil", new llvm::GlobalVariable(
+                 parent_->context.module, parent_->type_manager.valueType, true,
+                 llvm::GlobalValue::InternalLinkage, init, "nil"));
+
+  init = llvm::ConstantStruct::get(
+      parent_->type_manager.valueType,
+      {parent_->type_manager.getType(Type::T), zeroPayload});
+  constantGlobals_.emplace(
+      "t", new llvm::GlobalVariable(
+               parent_->context.module, parent_->type_manager.valueType, true,
+               llvm::GlobalValue::InternalLinkage, init, "t"));
+
+  builtInFns_["printInt"] = printFn_;
   builtInFns_["panic"] = emitPanic(codegenContext);
-  builtInFns_["boxInt"] = emitBoxInt(codegenContext);
-  builtInFns_["unboxInt"] = emitUnBoxInt(codegenContext);
   builtInFns_[getBuiltInName("cons")] = emitCons(codegenContext);
-  builtInFns_["boxCons"] = emitBoxCons(codegenContext);
-  builtInFns_["unboxCons"] = emitUnBoxCons(codegenContext);
   builtInFns_[getBuiltInName("car")] = emitCar(codegenContext);
   builtInFns_[getBuiltInName("cdr")] = emitCdr(codegenContext);
-  builtInFns_["unboxFn"] = emitUnBoxFn(codegenContext);
+  builtInFns_[getBuiltInName("setcar")] = emitSetCar(codegenContext);
+  builtInFns_[getBuiltInName("setcdr")] = emitSetCdr(codegenContext);
 
   builtInFns_["+"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("+"),
       [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         return builder.CreateAdd(a[0], a[1], "addtmp");
       },
-      getBuiltInFn("unboxInt"), getBuiltInFn("boxInt"));
+      {Type::Int, Type::Int}, Type::Int);
   builtInFns_["-"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("-"),
       [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         return builder.CreateSub(a[0], a[1], "subtmp");
       },
-      getBuiltInFn("unboxInt"), getBuiltInFn("boxInt"));
+      {Type::Int, Type::Int}, Type::Int);
   builtInFns_["*"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("*"),
       [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         return builder.CreateMul(a[0], a[1], "multmp");
       },
-      getBuiltInFn("unboxInt"), getBuiltInFn("boxInt"));
+      {Type::Int, Type::Int}, Type::Int);
   builtInFns_["<"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("<"),
-      [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+      [&codegenContext](llvm::IRBuilder<> &builder,
+                        llvm::ArrayRef<llvm::Value *> a) {
         auto boolRes = builder.CreateICmpSLT(a[0], a[1], "cmptmp");
-        return builder.CreateZExt(boolRes, builder.getInt64Ty(), "booltoint");
+        return builder.CreateSelect(
+            boolRes, codegenContext.lexenv.getConstGlobal("t"),
+            codegenContext.lexenv.getConstGlobal("nil"), "global.bool");
       },
-      getBuiltInFn("unboxInt"), getBuiltInFn("boxInt"));
+      {Type::Int, Type::Int}, std::nullopt);
+
+  builtInFns_[">"] = emitBuiltIn<2>(
+      codegenContext, getBuiltInName(">"),
+      [&codegenContext](llvm::IRBuilder<> &builder,
+                        llvm::ArrayRef<llvm::Value *> a) {
+        auto boolRes = builder.CreateICmpSGT(a[0], a[1], "cmptmp");
+        return builder.CreateSelect(
+            boolRes, codegenContext.lexenv.getConstGlobal("t"),
+            codegenContext.lexenv.getConstGlobal("nil"), "global.bool");
+      },
+      {Type::Int, Type::Int}, std::nullopt);
+
+  builtInFns_["="] = emitBuiltIn<2>(
+      codegenContext, getBuiltInName("="),
+      [&codegenContext](llvm::IRBuilder<> &builder,
+                        llvm::ArrayRef<llvm::Value *> a) {
+        auto boolRes = builder.CreateICmpEQ(a[0], a[1], "cmptmp");
+        return builder.CreateSelect(
+            boolRes, codegenContext.lexenv.getConstGlobal("t"),
+            codegenContext.lexenv.getConstGlobal("nil"), "global.bool");
+      },
+      {Type::Int, Type::Int}, std::nullopt);
+
+  builtInFns_["eq"] = emitBuiltIn<2>(
+      codegenContext, "eq",
+      [&codegenContext](llvm::IRBuilder<> &builder,
+                        llvm::ArrayRef<llvm::Value *> a) {
+        auto boolRes = builder.CreateICmpEQ(a[0], a[1], "cmptmp");
+        return builder.CreateSelect(
+            boolRes, codegenContext.lexenv.getConstGlobal("t"),
+            codegenContext.lexenv.getConstGlobal("nil"), "global.bool");
+      },
+      {std::nullopt, std::nullopt}, std::nullopt);
 
   builtInFns_["cons"] = emitBuiltIn<2>( // FIXME should I even cache normal
                                         // (even if predefined) functions?
@@ -58,46 +119,116 @@ CodegenContext::SymbolTable::SymbolTable(CodegenContext &codegenContext)
         return builder.CreateCall(getBuiltInFn(getBuiltInName("cons")),
                                   {a[0], a[1]}, "cons.ret");
       },
-      nullptr, getBuiltInFn("boxCons"));
+      {std::nullopt}, Type::Cons);
   builtInFns_["car"] = emitBuiltIn<1>(
       codegenContext, "car",
       [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         auto call = builder.CreateCall(getBuiltInFn(getBuiltInName("car")),
                                        {a[0]}, "car.ret");
-        call->setOnlyReadsMemory();
-        call->setDoesNotThrow();
+        // call->setOnlyReadsMemory();
+        // call->setDoesNotThrow();
         return call;
       },
-      getBuiltInFn("unboxCons"), nullptr);
+      {Type::Cons}, std::nullopt);
   builtInFns_["cdr"] = emitBuiltIn<1>(
       codegenContext, "cdr",
       [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
         auto call = builder.CreateCall(getBuiltInFn(getBuiltInName("cdr")),
                                        {a[0]}, "cdr.ret");
-        call->setOnlyReadsMemory();
-        call->setDoesNotThrow();
+        // call->setOnlyReadsMemory();
+        // call->setDoesNotThrow();
         return call;
       },
-      getBuiltInFn("unboxCons"), nullptr);
+      {Type::Cons}, std::nullopt);
 
-  // FIXME nil init looks bad and not const
-  /*auto *zeroPayload = llvm::ConstantAggregateZero::get(
-      llvm::ArrayType::get(builder().getInt8Ty(), 8));
-  auto *init = llvm::ConstantStruct::get(
-      getValueTy(), {module().getNamedGlobal("type.Cons"), zeroPayload});
-  named_values_.front().emplace(
-      "nil", new llvm::GlobalVariable(module(), getValueTy(), true,
-                                      llvm::GlobalValue::InternalLinkage, init,
-                                      "nil"));*/
+  builtInFns_["setcar"] = emitBuiltIn<2>(
+      codegenContext, "setcar",
+      [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+        auto call = builder.CreateCall(getBuiltInFn(getBuiltInName("setcar")),
+                                       {a[0], a[1]}, "setcar.ret");
+        // call->setOnlyReadsMemory();
+        // call->setDoesNotThrow();
+        return call;
+      },
+      {Type::Cons, std::nullopt}, std::nullopt);
+
+  builtInFns_["setcdr"] = emitBuiltIn<2>(
+      codegenContext, "setcdr",
+      [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+        auto call = builder.CreateCall(getBuiltInFn(getBuiltInName("setcdr")),
+                                       {a[0], a[1]}, "setcdr.ret");
+        // call->setOnlyReadsMemory();
+        // call->setDoesNotThrow();
+        return call;
+      },
+      {Type::Cons, std::nullopt}, std::nullopt);
+
+  builtInFns_["isInt"] = emitBuiltIn<1>(
+      codegenContext, "isInt",
+      [&codegenContext](llvm::IRBuilder<> &builder,
+                        llvm::ArrayRef<llvm::Value *> a) {
+        auto typecond =
+            codegenContext.type_manager.emitTypeCheck(a[0], Type::Int);
+        return builder.CreateSelect(
+            typecond, codegenContext.lexenv.getConstGlobal("t"),
+            codegenContext.lexenv.getConstGlobal("nil"));
+      },
+      {std::nullopt}, std::nullopt);
+
+  builtInFns_["isCons"] = emitBuiltIn<1>(
+      codegenContext, "isCons",
+      [&codegenContext](llvm::IRBuilder<> &builder,
+                        llvm::ArrayRef<llvm::Value *> a) {
+        auto typecond =
+            codegenContext.type_manager.emitTypeCheck(a[0], Type::Cons);
+        return builder.CreateSelect(
+            typecond, codegenContext.lexenv.getConstGlobal("t"),
+            codegenContext.lexenv.getConstGlobal("nil"));
+      },
+      {std::nullopt}, std::nullopt);
+
+  builtInFns_["isFn"] = emitBuiltIn<1>(
+      codegenContext, "isFn",
+      [&codegenContext](llvm::IRBuilder<> &builder,
+                        llvm::ArrayRef<llvm::Value *> a) {
+        auto typecond =
+            codegenContext.type_manager.emitTypeCheck(a[0], Type::Fn);
+        return builder.CreateSelect(
+            typecond, codegenContext.lexenv.getConstGlobal("t"),
+            codegenContext.lexenv.getConstGlobal("nil"));
+      },
+      {std::nullopt}, std::nullopt);
+
+  auto ptrType = codegenContext.type_manager.ptrType;
+  llvm::FunctionType *FT = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(parent_->context.context), {ptrType},
+      /*vararg=*/false);
+  ctorFn_ = llvm::Function::Create(FT, llvm::Function::InternalLinkage,
+                                   "init.Closures", parent_->context.module);
+
+  ctorBlock_ = llvm::BasicBlock::Create(parent_->context.context, "ctors.entry",
+                                        ctorFn_);
 }
 
-void CodegenContext::SymbolTable::enterScope() { named_values_.emplace_back(); }
+void CodegenContext::SymbolTable::enterScope(llvm::Argument *newEnv) {
+  named_values_.env_stack.emplace_back();
+  if (newEnv) {
+    named_values_.fn_idxes.emplace_back(named_values_.env_stack.size() - 1);
+    envStack_.emplace_back(newEnv);
+  }
+}
 
-void CodegenContext::SymbolTable::exitScope() { named_values_.pop_back(); }
+void CodegenContext::SymbolTable::exitScope(bool isFnScope) {
+  named_values_.env_stack.pop_back();
+  if (isFnScope) {
+    named_values_.fn_idxes.pop_back();
+    envStack_.pop_back();
+  }
+}
 
 void CodegenContext::SymbolTable::addVar(const std::string &name,
                                          llvm::AllocaInst *inst) {
-  named_values_.back().emplace(name, inst);
+  named_values_.env_stack.back().emplace(name, inst);
 }
 
 void CodegenContext::SymbolTable::addVar(const std::string &name,
@@ -105,23 +236,39 @@ void CodegenContext::SymbolTable::addVar(const std::string &name,
   globals_.emplace(name, inst);
 }
 
-std::pair<VarInst, bool>
+std::pair<VarInst, CodegenContext::SymbolTable::VarStatus>
 CodegenContext::SymbolTable::lookUpVar(const std::string &name) {
   llvm::AllocaInst *ret = nullptr;
-  auto local = false;
-  for (auto env = named_values_.rbegin(); env != named_values_.rend(); ++env) {
+  auto local = CodegenContext::SymbolTable::VarStatus::NotFound;
+  auto idx = named_values_.env_stack.size() - 1;
+  for (auto env = named_values_.env_stack.rbegin();
+       env != named_values_.env_stack.rend(); ++env, idx--) {
     auto it = env->find(name);
     if (it != env->end()) {
       ret = it->second;
-      local = env == named_values_.rbegin();
+      local = idx >= named_values_.fn_idxes.back()
+                  ? CodegenContext::SymbolTable::VarStatus::Local
+                  : CodegenContext::SymbolTable::VarStatus::Captured;
       break;
     }
   }
-  if (!ret)
+  if (!ret) {
     if (auto it = globals_.find(name); it != globals_.end())
-      return {it->second, false};
+      return {it->second, CodegenContext::SymbolTable::VarStatus::Global};
+    if (auto it = constantGlobals_.find(name); it != constantGlobals_.end())
+      return {it->second,
+              CodegenContext::SymbolTable::VarStatus::GlobalConstant};
+  }
 
   return {ret, local};
+}
+
+llvm::GlobalVariable *
+CodegenContext::SymbolTable::getConstGlobal(const std::string &name) {
+  if (auto found = constantGlobals_.find(name); found != constantGlobals_.end())
+    return found->second;
+
+  throw std::runtime_error("No global found");
 }
 
 std::vector<std::unordered_map<std::string, llvm::BasicBlock *>> &
@@ -148,6 +295,8 @@ llvm::Function *CodegenContext::SymbolTable::getTrapFn() { return trapFn_; }
 
 void CodegenContext::SymbolTable::addFreeVar(const std::string &name,
                                              llvm::AllocaInst *var) {
+  if (freeVars_.empty()) // no the best fix maybe
+    freeVars_.emplace_back();
   auto &last = freeVars_.back();
   for (auto &pair : last) {
     if (pair.first == name) {
@@ -173,147 +322,103 @@ size_t CodegenContext::SymbolTable::freeVarsSize() {
   return freeVars_.back().size();
 }
 
-llvm::Value *CodegenContext::SymbolTable::getCurrentEnv() {
+llvm::Argument *CodegenContext::SymbolTable::getCurrentEnv() {
   return envStack_.back();
 }
 
-CodegenContext::SymbolTable::PendingClosures::PendingClosures(
-    CodegenContext &codegenContext, llvm::Function *fnPtr,
-    const std::string &fnName, std::vector<llvm::AllocaInst *> &&freeVars,
-    size_t arity)
-    : fnPtr_(fnPtr), fnName_(fnName), freeVars_(std::move(freeVars)),
-      arity_(arity),
-      fnGlobal_(new llvm::GlobalVariable(
-          codegenContext.context.module,
-          codegenContext.type_manager.getPtrType(),
-          /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
-          llvm::Constant::getNullValue(
-              codegenContext.type_manager.getPtrType()),
-          fnName_)) {}
-
-void CodegenContext::SymbolTable::addPendingClosure(
-    llvm::Function *fnPtr, const std::string &fnName,
-    std::vector<llvm::AllocaInst *> &&freeVars, size_t arity) {
-  pendingClosures_.emplace_back(*parent_, fnPtr, fnName, std::move(freeVars),
-                                arity);
-  addVar(fnName, pendingClosures_.back().fnGlobal_);
+llvm::BasicBlock *CodegenContext::SymbolTable::getCtorBlock() {
+  return ctorBlock_;
 }
 
-void CodegenContext::SymbolTable::emitPendingClosure(
-    llvm::GlobalVariable *global, size_t idx) {
+llvm::Function *CodegenContext::SymbolTable::getPrintFn() { return printFn_; }
+
+llvm::Function *CodegenContext::SymbolTable::getCtorFn() { return ctorFn_; }
+
+/*
+llvm::BasicBlock *CodegenContext::SymbolTable::getCurContextBlock() {
+  return isDef_ ? ctorBlock_ : parent_->context.builder.GetInsertBlock();
+}
+
+llvm::Function *CodegenContext::SymbolTable::getCurCtorFn() {
+  return isDef_ ? ctorFn_
+                : parent_->context.builder.GetInsertBlock()->getParent();
+?????????
+}
+*/
+void CodegenContext::SymbolTable::setFnWrapperParameters(
+    std::vector<llvm::AllocaInst *> &&vars, size_t size) {
+  curFreeVars_ = vars;
+  curArgSize_ = size;
+}
+
+void CodegenContext::SymbolTable::setInsertBlock(llvm::BasicBlock *block,
+                                                 bool descend) {
+  if (descend)
+    insertBlocks_.push_back(block);
+  else if (!insertBlocks_.empty()) // A HACK FIXME TODO
+    insertBlocks_.back() = block;
+  parent_->context.builder.SetInsertPoint(block);
+}
+
+llvm::BasicBlock *CodegenContext::SymbolTable::getCurrentBlock() {
+  return insertBlocks_.empty() ? ctorBlock_ : insertBlocks_.back();
+}
+
+void CodegenContext::SymbolTable::ascend() {
+  insertBlocks_.pop_back();
+  parent_->context.builder.SetInsertPoint(getCurrentBlock());
+}
+
+llvm::Value *
+CodegenContext::SymbolTable::constructClosureWrapper(llvm::Function *fnPtr) {
   auto &codegenContext = *parent_;
-  auto thisClosure = pendingClosures_[idx];
-
-  auto &builder = codegenContext.context.builder;
-  auto &module = codegenContext.context.module;
+  auto &[context, builder, module] = codegenContext.context;
+  auto ptrType = codegenContext.type_manager.ptrType;
+  auto closureType = codegenContext.type_manager.closureType;
   auto &dataL = module.getDataLayout();
-  auto freeVars = thisClosure.freeVars_;
+
+  auto freeVars = std::move(curFreeVars_.value());
+  auto arity = std::move(curArgSize_.value());
+  curFreeVars_.reset();
+  curArgSize_.reset();
+
+  // codegenContext.lexenv.setInsertBlock(getCurrentBlock(), false);
+
   auto freeVarsSize = freeVars.size();
-  auto F = thisClosure.fnPtr_;
-  auto argSize = thisClosure.arity_;
 
-  auto closureTy = codegenContext.type_manager.getClosureTy();
-
-  auto envTy = codegenContext.type_manager.getEnvTy();
-
-  auto ptr = codegenContext.type_manager.getPtrType();
-
-  auto valueTy = codegenContext.type_manager.getValueTy();
-
-  auto fnTypeSize =
-      dataL.getTypeAllocSize(codegenContext.type_manager.getValueTy());
-
-  auto closureTypeSize = dataL.getTypeAllocSize(closureTy);
+  auto closureTypeSize = dataL.getTypeAllocSize(closureType);
 
   auto closureBoxed =
       builder.CreateCall(codegenContext.memory_manager.getArenaAllocator(),
                          {builder.getInt64(closureTypeSize)}, "closureVal");
-  // no bit cast
 
-  auto headerSize =
-      dataL.getTypeAllocSize(codegenContext.type_manager.getEnvTy());
-  uint64_t slotsSize =
-      freeVarsSize *
-      dataL.getTypeAllocSize(codegenContext.type_manager.getPtrType());
+  auto envGEP = codegenContext.type_manager.getClosureEnv(closureBoxed);
 
-  llvm::Value *env =
-      builder.CreateCall(codegenContext.memory_manager.getArenaAllocator(),
-                         {builder.getInt64(headerSize)});
+  uint64_t slotsSize = freeVarsSize * dataL.getTypeAllocSize(ptrType);
 
   llvm::Value *freeVarsArray =
       builder.CreateCall(codegenContext.memory_manager.getArenaAllocator(),
                          {builder.getInt64(slotsSize)});
 
-  auto *lenGEP = builder.CreateStructGEP(envTy, env, 0);
-  builder.CreateStore(builder.getInt64(freeVarsSize), lenGEP);
+  codegenContext.type_manager.storeEnvSize(builder.getInt64(freeVarsSize),
+                                           envGEP);
+
   for (size_t i = 0; i < freeVarsSize; ++i) {
     auto *slotPtr =
-        builder.CreateInBoundsGEP(ptr, freeVarsArray, builder.getInt64(i));
-    builder.CreateStore(freeVars[i], slotPtr);
+        builder.CreateInBoundsGEP(ptrType, freeVarsArray, builder.getInt64(i));
+    auto actualVal = builder.CreateLoad(
+        ptrType, freeVars[i], "loaded.noAlloca"); // more debug names for now
+    builder.CreateStore(actualVal, slotPtr);
   }
-  auto *slotsGEP = builder.CreateStructGEP(envTy, env, 1);
-  builder.CreateStore(freeVarsArray, slotsGEP);
+  codegenContext.type_manager.storeEnvStorage(freeVarsArray, envGEP);
 
-  auto envGEP = builder.CreateStructGEP(closureTy, closureBoxed, 0, "env.slot");
-  builder.CreateStore(env, envGEP);
+  codegenContext.type_manager.storeClosureFn(fnPtr, closureBoxed);
 
-  auto fnGEP = builder.CreateStructGEP(closureTy, closureBoxed, 1, "fn.slot");
-  builder.CreateStore(F, fnGEP);
+  codegenContext.type_manager.storeClosureSize(builder.getInt32(arity),
+                                               closureBoxed);
 
-  auto argSizeGEP =
-      builder.CreateStructGEP(closureTy, closureBoxed, 2, "arg.size.slot");
-  builder.CreateStore(builder.getInt64(argSize), argSizeGEP);
-
-  auto boxed =
-      builder.CreateCall(codegenContext.memory_manager.getArenaAllocator(),
-                         {builder.getInt64(fnTypeSize)}, "boxedFn");
-
-  auto fnDescGV = codegenContext.type_manager.getType("Fn");
-  auto typeGEP = builder.CreateStructGEP(valueTy, boxed, 0, "type.ptr");
-  builder.CreateStore(fnDescGV, typeGEP);
-
-  auto payloadGEP = builder.CreateStructGEP(valueTy, boxed, 1, "payload.ptr");
-  builder.CreateStore(closureBoxed, payloadGEP);
-
-  builder.CreateStore(boxed, global);
-}
-
-void CodegenContext::SymbolTable::initGlobalCtors() {
-  auto &codegenContext = *parent_;
-  auto &builder = codegenContext.context.builder;
-  auto &module = codegenContext.context.module;
-  auto ptr = codegenContext.type_manager.getPtrType();
-  auto i32Ty = llvm::Type::getInt32Ty(codegenContext.context.context);
-  auto globalSize = pendingClosures_.size();
-  auto elemTy = llvm::StructType::get(i32Ty, ptr, ptr);
-  auto elemArrayTy = llvm::ArrayType::get(elemTy, globalSize);
-  auto initCtors = std::vector<llvm::Constant *>();
-  for (size_t i = 0; i < pendingClosures_.size(); i++) {
-    auto &pending = pendingClosures_[i];
-    auto globalFn = pending.fnGlobal_;
-    llvm::FunctionType *FT = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(codegenContext.context.context), {ptr},
-        /*vararg=*/false);
-    llvm::Function *F = llvm::Function::Create(
-        FT, llvm::Function::InternalLinkage, "init." + pending.fnName_,
-        codegenContext.context.module);
-
-    llvm::BasicBlock *BB =
-        llvm::BasicBlock::Create(codegenContext.context.context, "entry", F);
-
-    builder.SetInsertPoint(BB);
-    emitPendingClosure(globalFn, i);
-    builder.CreateRet(nullptr);
-
-    llvm::Constant *ctorElem =
-        llvm::ConstantStruct::get(elemTy, {builder.getInt32(i), F, globalFn});
-    initCtors.push_back(ctorElem);
-  }
-
-  auto ctorArr = llvm::ConstantArray::get(elemArrayTy, initCtors);
-  new llvm::GlobalVariable(module, elemArrayTy, false,
-                           llvm::GlobalValue::AppendingLinkage, ctorArr,
-                           "llvm.global_ctors");
+  auto boxed = codegenContext.type_manager.packVal(closureBoxed, Type::Fn);
+  return boxed;
 }
 
 llvm::Value *createClosurecall(CodegenContext &codegenContext,
@@ -321,36 +426,52 @@ llvm::Value *createClosurecall(CodegenContext &codegenContext,
   // if (CalleeF->arg_size() != args_.size())
   //   throw std::runtime_error("Incorrect # arguments passed");
 
+  auto &[context, builder, module] = codegenContext.context;
+
+  auto envGEP = codegenContext.type_manager.getClosureEnv(inst);
+
+  auto fnPtr = codegenContext.type_manager.loadClosureFn(inst);
+
   std::vector<llvm::Value *> ArgsV;
   for (auto &Arg : args) {
-    ArgsV.push_back(Arg->codegen(codegenContext));
+    ArgsV.push_back(Arg->codegen(codegenContext).get());
     if (!ArgsV.back())
       return nullptr;
   }
-  auto &builder = codegenContext.context.builder;
-
-  auto closureTy = codegenContext.type_manager.getClosureTy();
-  auto ptr = codegenContext.type_manager.getPtrType();
-
-  auto *closurePtr =
-      builder.CreateBitCast(inst, closureTy->getPointerTo(), "closurePtrCast");
-
-  auto envGEP = builder.CreateStructGEP(closureTy, closurePtr, 0, "envGEP");
-  auto envPtr = builder.CreateLoad(ptr, envGEP, "env");
-
-  auto fnGEP = builder.CreateStructGEP(closureTy, closurePtr, 1, "fnGEP");
-  auto fnPtr = builder.CreateLoad(ptr, fnGEP, "fn");
 
   // let's skip the arg check for now
-  std::vector<llvm::Type *> types;
-  types.reserve(1 + ArgsV.size());
-  types.push_back(ptr);
-  for (size_t i = 0; i < ArgsV.size(); ++i)
-    types.push_back(ptr);
-  std::vector<llvm::Value *> envArgs{envPtr};
+  std::vector<llvm::Value *> envArgs{envGEP};
   envArgs.insert(envArgs.end(), ArgsV.begin(), ArgsV.end());
-  llvm::FunctionType *FT = llvm::FunctionType::get(ptr, types, false);
+  llvm::FunctionType *FT =
+      codegenContext.type_manager.getStdFnType(ArgsV.size());
+
   auto call = builder.CreateCall(FT, fnPtr, envArgs, "closure.res");
 
   return call;
+}
+
+void CodegenContext::addCtor(size_t priority, llvm::Function *ctor) {
+  auto ptrType = type_manager.ptrType;
+  auto elemType = llvm::StructType::get(type_manager.i32Type, ptrType, ptrType);
+  llvm::Constant *ctorElem = llvm::ConstantStruct::get(
+      elemType, {context.builder.getInt32(priority), ctor,
+                 llvm::Constant::getNullValue(ptrType)});
+  initCtors_.push_back(ctorElem);
+}
+
+void CodegenContext::emitClosuresCtor() {
+  context.builder.SetInsertPoint(lexenv.getCtorBlock());
+  context.builder.CreateRetVoid();
+
+  addCtor(3, lexenv.getCtorFn());
+
+  auto ptrType = type_manager.ptrType;
+  auto globalSize = initCtors_.size();
+  auto elemType = llvm::StructType::get(type_manager.i32Type, ptrType, ptrType);
+  auto elemArrayType = llvm::ArrayType::get(elemType, globalSize);
+
+  auto ctorArr = llvm::ConstantArray::get(elemArrayType, initCtors_);
+  new llvm::GlobalVariable(context.module, elemArrayType, false,
+                           llvm::GlobalValue::AppendingLinkage, ctorArr,
+                           "llvm.global_ctors");
 }

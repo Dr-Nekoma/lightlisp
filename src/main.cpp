@@ -3,13 +3,15 @@
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/TargetParser/Triple.h"
 #include <llvm/Support/FileSystem.h>
 #include <llvm/TargetParser/Host.h>
 
 #include <fstream>
 
 int genObjectFile(CodegenContext &codegenContext) {
-  auto TargetTriple = llvm::sys::getDefaultTargetTriple();
+  auto TargetTripleStr = llvm::sys::getDefaultTargetTriple();
+  llvm::Triple TargetTriple(TargetTripleStr);
 
   llvm::InitializeAllTargetInfos();
   llvm::InitializeAllTargets();
@@ -28,8 +30,8 @@ int genObjectFile(CodegenContext &codegenContext) {
     return 1;
   }
 
-  auto CPU = "generic";
-  auto Features = "";
+  const auto CPU = "generic";
+  const auto Features = "";
 
   llvm::TargetOptions opt;
   auto TargetMachine = Target->createTargetMachine(TargetTriple, CPU, Features,
@@ -39,7 +41,7 @@ int genObjectFile(CodegenContext &codegenContext) {
       TargetMachine->createDataLayout());
   codegenContext.context.module.setTargetTriple(TargetTriple);
 
-  auto Filename = "lisp.o";
+  const auto Filename = "lisp.o";
   std::error_code EC;
   llvm::raw_fd_ostream dest(Filename, EC, llvm::sys::fs::OF_None);
 
@@ -61,9 +63,8 @@ int genObjectFile(CodegenContext &codegenContext) {
   return 0;
 }
 
-static std::vector<std::unique_ptr<Function>>
-prepareTopLevelFns(CodegenContext &codegenContext, Parser &&parser) {
-  std::vector<std::unique_ptr<Function>> functions;
+static void prepareTopLevelFns(CodegenContext &codegenContext,
+                               Parser &&parser) {
 
   while (!parser.IsEnd()) {
     auto syntax = parser.Read();
@@ -71,19 +72,8 @@ prepareTopLevelFns(CodegenContext &codegenContext, Parser &&parser) {
       continue;
     auto ast = ir1LispTransform(std::move(syntax));
 
-    auto fnAST = dynamic_cast<Function *>(ast.release());
-    if (!fnAST)
-      throw std::runtime_error(
-          "Only function definitions allowed at top level");
-
-    functions.emplace_back(std::make_unique<Function>(std::move(*fnAST)));
+    ast->codegen(codegenContext);
   }
-
-  for (auto &Fptr : functions) {
-    if (!Fptr->codegen(codegenContext))
-      throw std::runtime_error("Codegen failed for a function");
-  }
-  return functions;
 }
 
 /*ObjPtr parseTopLevelExpr(ObjPtr body) {
@@ -102,7 +92,7 @@ int main(int argc, char **argv) { // Needs cleanup
     llvm::errs() << "Usage: " << argv[0] << " <input-file>\n";
     return 1;
   }
-  std::string filename = argv[1];
+  const std::string filename = argv[1];
 
   std::ifstream my_lisp(filename);
   if (!my_lisp) {
@@ -116,13 +106,12 @@ int main(int argc, char **argv) { // Needs cleanup
   CodegenContext codegenContext;
   InitializeModuleAndManagers(codegenContext);
 
-  std::vector<std::unique_ptr<Function>> functions =
-      prepareTopLevelFns(codegenContext, std::move(parser));
-  codegenContext.lexenv.initGlobalCtors();
-  /*auto lispMain = codegenContext.context.module.getFunction("main");
-  if (!lispMain)
-    throw std::runtime_error("`main` function not found in Lisp code");
-  lispMain->setName("lisp_main");
+  prepareTopLevelFns(codegenContext, std::move(parser));
+  codegenContext.emitClosuresCtor();
+  // auto lispMain = codegenContext.context.module.getFunction("main");
+  // if (!lispMain)
+  //  throw std::runtime_error("`main` function not found in Lisp code");
+  // lispMain->setName("lisp_main");
   {
     auto &C = codegenContext.context.context;
     auto &builder = codegenContext.context.builder;
@@ -134,21 +123,14 @@ int main(int argc, char **argv) { // Needs cleanup
         llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "main", &M);
 
     // 2) Create three blocks: entry, body, exit
-    auto entryBB = llvm::BasicBlock::Create(C, "entry", wrapper);
     auto bodyBB = llvm::BasicBlock::Create(C, "body", wrapper);
     auto exitBB = llvm::BasicBlock::Create(C, "exit", wrapper);
-    // ——— ENTRY block — mmap and jump to body ———
-    builder.SetInsertPoint(entryBB);
-    codegenContext.memory_manager.prepareArena(codegenContext.context);
-
-    // jump into the body
-    builder.CreateBr(bodyBB);
 
     // ——— BODY block — call lisp_main & branch to exit ———
     builder.SetInsertPoint(bodyBB);
     // call your generated lisp_main (returns Value*)
 
-    auto ret32 = prepareCMain(codegenContext, lispMain);
+    auto ret32 = prepareCMain(codegenContext);
 
     // stash the return code in a spill slot (or pass it via a reg)
     // for simplicity, we can branch with an i32 constant:
@@ -167,8 +149,11 @@ int main(int argc, char **argv) { // Needs cleanup
     codegenContext.memory_manager.munmapArena(codegenContext.context);
 
     // finally return the i32
-    builder.CreateRet(ret32  );
-  }*/
+
+    // auto loaded =
+    //     builder.CreateLoad(builder.getInt32Ty(), codegenContext.debug);
+    builder.CreateRet(ret32);
+  }
 
   for (auto &F : codegenContext.context.module) {
     llvm::verifyFunction(F);

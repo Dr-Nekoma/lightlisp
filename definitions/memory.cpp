@@ -1,10 +1,10 @@
 #include "meta.h"
 
-CodegenContext::Memorymanager::Memorymanager(IRGenContext &irgc) {
-  auto i8Ptr =
-      llvm::PointerType::get(llvm::IntegerType::get(irgc.context, 8), 0);
-  auto i64Ty = llvm::Type::getInt64Ty(irgc.context);
-  auto i32Ty = llvm::Type::getInt32Ty(irgc.context);
+CodegenContext::Memorymanager::Memorymanager(CodegenContext &codegenContext) {
+  auto &[context, builder, module] = codegenContext.context;
+  auto i8Ptr = llvm::PointerType::get(context, 0);
+  auto i64Ty = llvm::Type::getInt64Ty(context);
+  auto i32Ty = llvm::Type::getInt32Ty(context);
 
   // void* mmap(void*, size_t, int, int, int, off_t);
   // on Linux off_t is 64-bit:
@@ -18,31 +18,33 @@ CodegenContext::Memorymanager::Memorymanager(IRGenContext &irgc) {
   };
   auto mmapFT = llvm::FunctionType::get(i8Ptr, mmapArgs, /*vararg*/ false);
   mmapFn_ = cast<llvm::Function>(
-      irgc.module.getOrInsertFunction("mmap", mmapFT).getCallee());
+      module.getOrInsertFunction("mmap", mmapFT).getCallee());
 
   // int munmap(void*, size_t);
   auto munmapFT =
       llvm::FunctionType::get(i32Ty, {i8Ptr, i64Ty}, /*vararg*/ false);
   munmapFn_ = cast<llvm::Function>(
-      irgc.module.getOrInsertFunction("munmap", munmapFT).getCallee());
+      module.getOrInsertFunction("munmap", munmapFT).getCallee());
 
   arenaPtrGV_ = new llvm::GlobalVariable(
-      irgc.module, i8Ptr,
+      module, i8Ptr,
       /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
       llvm::Constant::getNullValue(i8Ptr), "arenaBase");
 
   arenaNextGV_ = new llvm::GlobalVariable(
-      irgc.module, i64Ty,
+      module, i64Ty,
       /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
       llvm::ConstantInt::get(i64Ty, 0), "arenaNext");
 
   uint64_t arenaCapacity = 1024 * 1024 * 8;
   arenaSizeGV_ = new llvm::GlobalVariable(
-      irgc.module, i64Ty,
+      module, i64Ty,
       /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
       llvm::ConstantInt::get(i64Ty, arenaCapacity), "arenaSize");
 
-  arenaAllocValueFn_ = defineArenaAlloc(irgc);
+  prepareArena(codegenContext);
+
+  arenaAllocValueFn_ = defineArenaAlloc(codegenContext.context);
 }
 
 llvm::Function *
@@ -64,30 +66,26 @@ CodegenContext::Memorymanager::defineArenaAlloc(IRGenContext &irgc) {
   auto it = allocator->arg_begin();
   it->setName("size");
 
-  llvm::BasicBlock *entry = llvm::BasicBlock::Create(C, "entry", allocator);
+  auto entry = llvm::BasicBlock::Create(C, "entry", allocator);
   B.SetInsertPoint(entry);
 
   // Load the current index
-  llvm::Value *idx =
+  auto idx =
       B.CreateLoad(getArenaNextGV()->getValueType(), getArenaNextGV(), "idx");
-
-  // Compute the byte-offset = idx * size
+  // Compute the byte-offset = idx + size
   auto size = &*it;
-  llvm::Value *offset = B.CreateMul(idx, size, "offsetBytes");
+  llvm::Value *offset = B.CreateAdd(idx, size, "offsetBytes");
 
   // Load the base pointer (i8*)
-  llvm::Value *base =
+  auto base =
       B.CreateLoad(getArenaPtrGV()->getValueType(), getArenaPtrGV(), "base");
 
-  // Compute raw cell ptr = base + offset
+  // Compute raw cell ptr = base + idx
   //    (getelementptr i8, i8* base, i64 offset)
   llvm::Value *rawCellPtr =
-      B.CreateInBoundsGEP(llvm::Type::getInt8Ty(C), base, offset, "cellRawPtr");
+      B.CreateInBoundsGEP(llvm::Type::getInt8Ty(C), base, idx, "cellRawPtr");
 
-  // Bump the index: idx+1
-  llvm::Value *nextIdx =
-      B.CreateAdd(idx, llvm::ConstantInt::get(i64Ty, 1), "idxPlus");
-  B.CreateStore(nextIdx, getArenaNextGV());
+  B.CreateStore(offset, getArenaNextGV());
 
   // No cast, this is raw allocated space
   B.CreateRet(rawCellPtr);
@@ -118,12 +116,10 @@ llvm::GlobalVariable *CodegenContext::Memorymanager::getArenaSizeGV() {
   return arenaSizeGV_;
 }
 
-void CodegenContext::Memorymanager::prepareArena(IRGenContext &irgc) {
-  auto &builder = irgc.builder;
-  auto i8Ptr =
-      llvm::PointerType::get(llvm::IntegerType::get(irgc.context, 8), 0);
-  auto sizeVal =
-      builder.CreateLoad(builder.getInt64Ty(), getArenaSizeGV(), "size");
+void CodegenContext::Memorymanager::prepareArena(
+    CodegenContext &codegenContext) {
+  auto &[context, builder, module] = codegenContext.context;
+  auto i8Ptr = llvm::PointerType::get(context, 0);
 
   int PROT_READ = 1;
   int PROT_WRITE = 2;
@@ -135,6 +131,17 @@ void CodegenContext::Memorymanager::prepareArena(IRGenContext &irgc) {
   auto fd = builder.getInt32(-1);
   auto off = builder.getInt64(0);
 
+  llvm::FunctionType *FT =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context), {i8Ptr},
+                              /*vararg=*/false);
+  llvm::Function *F = llvm::Function::Create(
+      FT, llvm::Function::InternalLinkage, "prepare.arena", module);
+
+  llvm::BasicBlock *BB = llvm::BasicBlock::Create(context, "entry", F);
+
+  builder.SetInsertPoint(BB);
+  auto sizeVal =
+      builder.CreateLoad(builder.getInt64Ty(), getArenaSizeGV(), "size");
   // call mmap(NULL, size, prot, flags, fd, off)
   auto basePtr = builder.CreateCall(
       getmmapFn(),
@@ -142,12 +149,14 @@ void CodegenContext::Memorymanager::prepareArena(IRGenContext &irgc) {
       "arenaBaseRaw");
   // store into your global
   builder.CreateStore(basePtr, getArenaPtrGV());
+  builder.CreateRet(nullptr);
+
+  codegenContext.addCtor(0, F);
 }
 
 void CodegenContext::Memorymanager::munmapArena(IRGenContext &irgc) {
   auto &builder = irgc.builder;
-  auto i8Ptr =
-      llvm::PointerType::get(llvm::IntegerType::get(irgc.context, 8), 0);
+  auto i8Ptr = llvm::PointerType::get(irgc.context, 0);
 
   auto base = builder.CreateLoad(i8Ptr, getArenaPtrGV(), "base");
   auto sizeVal2 =

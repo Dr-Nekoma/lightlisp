@@ -3,26 +3,29 @@
 #include "objects.h"
 #include "util.h"
 
-llvm::Value *Number::codegen(CodegenContext &codegenContext) {
-  auto &B = codegenContext.context.builder;
-  llvm::Value *raw = B.getInt64(value_);
-
-  llvm::Function *boxFn = codegenContext.lexenv.getBuiltInFn("boxInt");
+TaggedLLVMVal Number::codegen(CodegenContext &codegenContext) {
+  auto &[context, builder, module] = codegenContext.context;
+  llvm::Value *raw = builder.getInt64(value_);
 
   auto name = "num" + std::to_string(value_);
-  llvm::Value *boxed = B.CreateCall(boxFn, {raw}, name);
+  llvm::Value *boxed = codegenContext.type_manager.packVal(raw, Type::Int);
 
   return boxed;
 }
 
-llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
-  auto [var, is_local] = codegenContext.lexenv.lookUpVar(name_);
-  auto &builder = codegenContext.context.builder;
-
-  if (!var.get() && !var.getGlob())
-    throw std::runtime_error("Unknown variable name");
-  if (!is_local && !var.getGlob()) {
-    codegenContext.lexenv.addFreeVar(name_, var.get());
+TaggedLLVMVal Variable::codegen(CodegenContext &codegenContext) {
+  if (auto fn = codegenContext.lexenv.getBuiltInFn(name_); fn) {
+    return fn;
+  }
+  auto [var, status] = codegenContext.lexenv.lookUpVar(name_);
+  auto &[context, builder, module] = codegenContext.context;
+  switch (status) {
+  case CodegenContext::SymbolTable::VarStatus::Local: {
+    auto local = var.getLocal();
+    return builder.CreateLoad(local->getAllocatedType(), local, name_);
+  }
+  case CodegenContext::SymbolTable::VarStatus::Captured: {
+    codegenContext.lexenv.addFreeVar(name_, var.getLocal());
 
     auto idx =
         codegenContext.lexenv.freeVarsSize() -
@@ -30,64 +33,58 @@ llvm::Value *Variable::codegen(CodegenContext &codegenContext) {
            // environment it would have this exact idxx for this exact variable
     auto curEnv = codegenContext.lexenv.getCurrentEnv();
 
-    auto slotPtr = builder.CreateInBoundsGEP(
-        codegenContext.type_manager.getEnvTy(), // the Env struct type
-        curEnv,                                 // Env*
-        {
-            builder.getInt32(0),  // index into the pointer itself
-            builder.getInt32(1),  // field #1 = slots
-            builder.getInt64(idx) // element in the array
-        },
-        "env.slot.ptr");
+    auto ptrType = codegenContext.type_manager.ptrType;
+    auto slotsPtr = codegenContext.type_manager.loadEnvStorage(curEnv);
 
-    return builder.CreateLoad(codegenContext.type_manager.getPtrType(), slotPtr,
+    auto pos =
+        builder.CreateInBoundsGEP(ptrType, slotsPtr, builder.getInt64(idx));
+    auto valCapture = builder.CreateLoad(ptrType, pos, "debug.Capture");
+
+    return valCapture;
+  }
+
+  case CodegenContext::SymbolTable::VarStatus::Global: {
+    auto global = var.getGlob();
+    return builder.CreateLoad(codegenContext.type_manager.ptrType, global,
                               name_);
   }
-  // if not local, instead of a load need GEP + load
-  if (auto local = var.get()) {
-    return builder.CreateLoad(local->getAllocatedType(), local, name_);
+  case CodegenContext::SymbolTable::VarStatus::GlobalConstant: {
+    auto global = var.getGlob();
+    return global;
   }
-  return var.getGlob();
+  case CodegenContext::SymbolTable::VarStatus::NotFound:
+    throw std::runtime_error("Unknown variable name");
+  }
 }
 
-llvm::Value *Call::codegen(CodegenContext &codegenContext) {
+TaggedLLVMVal Call::codegen(CodegenContext &codegenContext) {
+  auto &[context, builder, module] = codegenContext.context;
   // Look up the name in the global module table.
-  llvm::Function *CalleeF = codegenContext.lexenv.getBuiltInFn(callee_);
-  if (CalleeF) {
+  TaggedLLVMVal CalleeF = callee_->codegen(codegenContext);
+  if (CalleeF.isFn()) {
+    auto fn = CalleeF.getFn();
     // If argument mismatch error.
-    if (CalleeF->arg_size() != args_.size())
+    if (fn->arg_size() != args_.size())
       throw std::runtime_error("Incorrect # arguments passed");
 
     std::vector<llvm::Value *> ArgsV;
     for (auto &Arg : args_) {
-      ArgsV.push_back(Arg->codegen(codegenContext));
+      ArgsV.push_back(Arg->codegen(codegenContext).get());
       if (!ArgsV.back())
-        return nullptr;
+        return {};
     }
 
-    auto call =
-        codegenContext.context.builder.CreateCall(CalleeF, ArgsV, "calltmp");
-    if (callee_ == "car" || callee_ == "cdr") { // FIXME this can't be good
-      call->setOnlyReadsMemory();
-    }
+    auto call = builder.CreateCall(fn, ArgsV, "calltmp");
+    // if (callee_ == "car" || callee_ == "cdr") { // FIXME this can't be good
+    //   call->setOnlyReadsMemory();
+    // }
 
     return call;
   }
-  auto userVal = codegenContext.lexenv.lookUpVar(callee_).first;
-  if (auto local = userVal.get()) {
-    auto unboxFn =
-        codegenContext.lexenv.getBuiltInFn("unboxFn"); // Not implemented
-    auto closure = codegenContext.context.builder.CreateCall(unboxFn, {local},
-                                                             "closure.ptr");
-    return createClosurecall(codegenContext, closure, args_);
-  }
-  if (auto global = userVal.getGlob()) {
-    auto unboxFn = codegenContext.lexenv.getBuiltInFn("unboxFn");
-    auto closure = codegenContext.context.builder.CreateCall(unboxFn, {global},
-                                                             "closure.ptr");
-    return createClosurecall(codegenContext, closure, args_);
-  }
-  return nullptr;
+  auto userVar = CalleeF.get();
+  auto closure = codegenContext.type_manager.checkAndUnpack(userVar, Type::Fn);
+
+  return createClosurecall(codegenContext, closure, args_);
 }
 
 /*
@@ -108,154 +105,81 @@ llvm::Value *Prototype::codegen(CodegenContext &codegenContext) {
   return F;
 }*/
 
-llvm::Value *Function::codegen(CodegenContext &codegenContext) {
-  // First, check for an existing function from a previous 'extern' declaration.
-  /*llvm::Function *currentFn =
-      codegenContext.context.module.getFunction(proto_.getName());
+TaggedLLVMVal Def::codegen(CodegenContext &codegenContext) {
+  auto &[context, builder, module] = codegenContext.context;
+  auto &name = var_->getName();
 
-  if (!currentFn)
-    currentFn = proto_.codegen(codegenContext);
+  auto global = new llvm::GlobalVariable(
+      codegenContext.context.module, codegenContext.type_manager.ptrType,
+      /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
+      llvm::Constant::getNullValue(codegenContext.type_manager.ptrType), name);
 
-  if (!currentFn)
-    return nullptr;
+  codegenContext.lexenv.addVar(name, global);
 
-  if (!currentFn->empty())
-    throw std::runtime_error("Function cannot be redefined.");*/
-  auto ptrType = codegenContext.type_manager.getPtrType();
-  auto envTy = codegenContext.type_manager.getEnvTy();
-  auto size = args_.size();
-  std::vector<llvm::Type *> types;
-  types.reserve(1 + size);
-  types.push_back(ptrType);
-  for (size_t i = 0; i < size; ++i)
-    types.push_back(ptrType);
-  llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, types, false);
+  auto initVal = init_->codegen(codegenContext).get();
 
-  llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, getGlobalFnName(std::string(name_)),
-      codegenContext.context.module);
+  if (!initVal)
+    return {};
 
-  // Set names for all arguments.
-  auto &arg = *F->arg_begin();
-  arg.setName("_____env");
+  builder.CreateStore(initVal, global);
 
-  unsigned Idx = 0;
-  auto it = F->arg_begin();
-  it++;
-  for (; it != F->arg_end(); it++)
-    it->setName(args_[Idx++]);
-
-  // Create a new basic block to start insertion into.
-  llvm::BasicBlock *BB =
-      llvm::BasicBlock::Create(codegenContext.context.context, "entry", F);
-  codegenContext.context.builder.SetInsertPoint(BB);
-
-  codegenContext.lexenv.enterScope();
-  it = F->arg_begin();
-  it++;
-  for (; it != F->arg_end(); it++) {
-    llvm::AllocaInst *Alloca =
-        CreateEntryBlockAlloca(F, codegenContext.type_manager.getPtrType(),
-                               std::string(it->getName()));
-
-    codegenContext.context.builder.CreateStore(&*it, Alloca);
-
-    codegenContext.lexenv.addVar(std::string(it->getName()), Alloca);
-  }
-
-  if (llvm::Value *RetVal = body_->codegen(codegenContext)) {
-    codegenContext.context.builder.CreateRet(RetVal);
-
-    codegenContext.lexenv.exitScope();
-
-    llvm::verifyFunction(*F);
-
-    Optimizer::getFPM().run(*F, Optimizer::getFAM());
-    auto freeVarsAndNames = codegenContext.lexenv.popFreeVars();
-    std::vector<llvm::AllocaInst *> freeVars;
-    freeVars.reserve((freeVarsAndNames.size()));
-    for (auto &[_, inst] : freeVarsAndNames) {
-      freeVars.push_back(inst);
-    }
-
-    codegenContext.lexenv.addPendingClosure(F, name_, std::move(freeVars),
-                                            args_.size());
-
-    return F;
-  }
-
-  codegenContext.lexenv.exitScope();
-  // Error reading body, remove function.
-  F->eraseFromParent();
-  return nullptr;
+  return global;
 }
 
-llvm::Value *BuiltInOp::codegen(CodegenContext &codegenContext) {
+TaggedLLVMVal Setq::codegen(CodegenContext &codegenContext) {
   // Special case '=' because we don't want to emit the LHS as an expression.
-  if (name_ == "setq") {
+  auto &[context, builder, module] = codegenContext.context;
 
-    auto LHSE = static_cast<Variable *>(fst_.get());
-    if (!LHSE)
-      throw std::runtime_error("destination of '=' must be a variable");
-    auto name = LHSE->getName();
-    auto [var, is_local] = codegenContext.lexenv.lookUpVar(name);
-    auto &builder = codegenContext.context.builder;
+  auto name = var_->getName();
+  auto [var, status] = codegenContext.lexenv.lookUpVar(name);
 
-    if (!var.get() && !var.getGlob())
-      throw std::runtime_error("Unknown variable name");
+  llvm::Value *Val = newval_->codegen(codegenContext).get();
+  // Codegen the RHS.
+  if (!Val)
+    return {};
 
-    // Codegen the RHS.
-    llvm::Value *Val = snd_->codegen(codegenContext);
-    if (!Val)
-      return nullptr;
+  switch (status) {
+  case CodegenContext::SymbolTable::VarStatus::Local:
+    builder.CreateStore(Val, var.getLocal());
+    break;
+  case CodegenContext::SymbolTable::VarStatus::Captured: {
+    codegenContext.lexenv.addFreeVar(name, var.getLocal());
 
-    if (!is_local && !var.getGlob()) {
-      codegenContext.lexenv.addFreeVar(name_, var.get());
+    auto idx = codegenContext.lexenv.freeVarsSize() - 1;
+    auto curEnv = codegenContext.lexenv.getCurrentEnv();
 
-      auto idx = codegenContext.lexenv.freeVarsSize() -
-                 1; // idx after I add the var, so that later when we emit the
-                    // environment it would have this exact idxx for this exact
-                    // variable
-      auto curEnv = codegenContext.lexenv.getCurrentEnv();
+    auto ptrType = codegenContext.type_manager.ptrType;
+    auto slotsPtr = codegenContext.type_manager.loadEnvStorage(curEnv);
 
-      auto slotPtr = builder.CreateInBoundsGEP(
-          codegenContext.type_manager.getEnvTy(), // the Env struct type
-          curEnv,                                 // Env*
-          {
-              builder.getInt32(0),  // index into the pointer itself
-              builder.getInt32(1),  // field #1 = slots
-              builder.getInt64(idx) // element in the array
-          },
-          "env.slot.ptr");
+    auto pos =
+        builder.CreateInBoundsGEP(ptrType, slotsPtr, builder.getInt64(idx));
 
-      builder.CreateStore(Val, slotPtr);
-    } else
-      // if not local, instead of a load need GEP + load
-      if (auto local = var.get()) {
-        builder.CreateStore(Val, local);
-      } else {
-        builder.CreateStore(Val, var.getGlob());
-      }
-    return Val;
+    auto val = builder.CreateLoad(ptrType, pos, "stored.val");
+
+    codegenContext.type_manager.copyValInto(Val, val);
+    break;
   }
-  return nullptr;
+  case CodegenContext::SymbolTable::VarStatus::Global:
+    builder.CreateStore(Val, var.getGlob());
+    break;
+  case CodegenContext::SymbolTable::VarStatus::GlobalConstant:
+    throw std::runtime_error("Cannot setq constants");
+  case CodegenContext::SymbolTable::VarStatus::NotFound:
+    throw std::runtime_error("Unknown variable name");
+  }
+
+  return Val;
 }
 
-llvm::Value *If::codegen(CodegenContext &codegenContext) {
-  auto &builder = codegenContext.context.builder;
-  auto &context = codegenContext.context.context;
+TaggedLLVMVal If::codegen(CodegenContext &codegenContext) {
+  auto &[context, builder, module] = codegenContext.context;
 
-  // 1) Generate the boxed Value* for the condition
-  llvm::Value *condBoxed = Cond->codegen(codegenContext);
+  // Generate the boxed Value* for the condition
+  llvm::Value *condBoxed = cond_->codegen(codegenContext).get();
   if (!condBoxed)
-    return nullptr;
+    return {};
 
-  llvm::Function *unboxFn = codegenContext.lexenv.getBuiltInFn("unboxInt");
-  auto rawCond = builder.CreateCall(unboxFn, {condBoxed}, "unboxedCond");
-
-  // 3) Compare i64 != 0 → i1
-  llvm::Value *condI1 =
-      builder.CreateICmpNE(rawCond, builder.getInt64(0), "ifcond");
+  llvm::Value *condI1 = codegenContext.type_manager.emitTrueCheck(condBoxed);
 
   llvm::Function *currentFn = builder.GetInsertBlock()->getParent();
   llvm::BasicBlock *ThenBB =
@@ -265,11 +189,11 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
 
   builder.CreateCondBr(condI1, ThenBB, ElseBB);
 
-  builder.SetInsertPoint(ThenBB);
+  codegenContext.lexenv.setInsertBlock(ThenBB, false);
 
-  llvm::Value *ThenV = Then->codegen(codegenContext);
+  llvm::Value *ThenV = then_->codegen(codegenContext).get();
   if (!ThenV)
-    return nullptr;
+    return {};
 
   builder.CreateBr(MergeBB);
   // Codegen of 'Then' can change the current block, update ThenBB for the PHI.
@@ -277,46 +201,60 @@ llvm::Value *If::codegen(CodegenContext &codegenContext) {
 
   // Emit else block.
   currentFn->insert(currentFn->end(), ElseBB);
-  builder.SetInsertPoint(ElseBB);
+  codegenContext.lexenv.setInsertBlock(ElseBB, false);
 
-  llvm::Value *ElseV = Else->codegen(codegenContext);
+  llvm::Value *ElseV = else_->codegen(codegenContext).get();
   if (!ElseV)
-    return nullptr;
+    return {};
 
   builder.CreateBr(MergeBB);
   // codegen of 'Else' can change the current block, update ElseBB for the PHI.
   ElseBB = builder.GetInsertBlock();
 
   currentFn->insert(currentFn->end(), MergeBB);
-  builder.SetInsertPoint(MergeBB);
+  codegenContext.lexenv.setInsertBlock(MergeBB, false);
   llvm::PHINode *PN =
-      builder.CreatePHI(codegenContext.type_manager.getPtrType(), 2, "iftmp");
+      builder.CreatePHI(codegenContext.type_manager.ptrType, 2, "iftmp");
 
   PN->addIncoming(ThenV, ThenBB);
   PN->addIncoming(ElseV, ElseBB);
   return PN;
 }
 
-llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
+TaggedLLVMVal Goto::codegen(CodegenContext &codegenContext) {
   llvm::Function *currentFn =
       codegenContext.context.builder.GetInsertBlock()->getParent();
-  auto &builder = codegenContext.context.builder;
+  auto &[context, builder, module] = codegenContext.context;
 
+  // Check if this is a simple sequential body with no tags
+  auto nonTrivialTags = std::any_of(body_.begin(), body_.end(), [](auto &item) {
+    return std::holds_alternative<std::string>(item);
+  });
+  if (!nonTrivialTags) {
+    llvm::Value *ret;
+    for (auto &item : body_) {
+      auto &expr = std::get<ObjPtr>(item);
+      ret = expr->codegen(codegenContext).get();
+    }
+    return ret;
+  }
+
+  // Storage for preserving the last evaluated expression value
   auto lastVal = CreateEntryBlockAlloca(
-      currentFn, codegenContext.type_manager.getPtrType(), "tagbody.ret");
+      currentFn, codegenContext.type_manager.ptrType, "tagbody.ret");
 
   codegenContext.lexenv.tagEnvs().emplace_back();
 
   for (auto &item : body_) {
     if (auto tag =
             std::get_if<std::string>(&item)) { // check for the repeating tags
-      codegenContext.lexenv.lastTagEnv()[*tag] = llvm::BasicBlock::Create(
-          codegenContext.context.context, *tag, currentFn);
+      codegenContext.lexenv.lastTagEnv()[*tag] =
+          llvm::BasicBlock::Create(context, *tag, currentFn);
     }
   }
 
   llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(
-      codegenContext.context.context,
+      context,
       "tagbody.exit" + std::to_string(codegenContext.lexenv.tagEnvs().size()),
       currentFn);
 
@@ -326,10 +264,11 @@ llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
     if (auto tag = std::get_if<std::string>(&item)) {
       if (!curBB->getTerminator())
         builder.CreateBr(codegenContext.lexenv.lastTagEnv()[*tag]);
-      builder.SetInsertPoint(codegenContext.lexenv.lastTagEnv()[*tag]);
+      codegenContext.lexenv.setInsertBlock(
+          codegenContext.lexenv.lastTagEnv()[*tag], false);
     } else {
       auto &expr = std::get<ObjPtr>(item);
-      auto v = expr->codegen(codegenContext);
+      auto v = expr->codegen(codegenContext).get();
       if (v)
         builder.CreateStore(v, lastVal);
       curBB = builder.GetInsertBlock();
@@ -338,15 +277,15 @@ llvm::Value *Goto::codegen(CodegenContext &codegenContext) {
 
   if (!curBB->getTerminator())
     builder.CreateBr(afterBB);
-  builder.SetInsertPoint(afterBB);
-  llvm::Value *last = builder.CreateLoad(
-      codegenContext.type_manager.getPtrType(), lastVal, "tagbody.last");
+  codegenContext.lexenv.setInsertBlock(afterBB, false);
+  llvm::Value *last = builder.CreateLoad(codegenContext.type_manager.ptrType,
+                                         lastVal, "tagbody.last");
   codegenContext.lexenv.tagEnvs().pop_back();
 
   return last;
 }
 
-llvm::Value *Go::codegen(CodegenContext &codegenContext) {
+TaggedLLVMVal Go::codegen(CodegenContext &codegenContext) {
   llvm::BasicBlock *dest = nullptr;
   for (auto env = codegenContext.lexenv.tagEnvs().rbegin();
        env != codegenContext.lexenv.tagEnvs().rend(); ++env) {
@@ -362,40 +301,101 @@ llvm::Value *Go::codegen(CodegenContext &codegenContext) {
 
   codegenContext.context.builder.CreateBr(dest);
 
-  return nullptr;
+  return {};
 }
 
-llvm::Value *Let::codegen(CodegenContext &codegenContext) {
+TaggedLLVMVal Let::codegen(CodegenContext &codegenContext) {
+  auto &[context, builder, module] = codegenContext.context;
   llvm::Function *currentFn =
-      codegenContext.context.builder.GetInsertBlock()->getParent();
-
+      codegenContext.lexenv.getCurrentBlock()->getParent();
+  auto &name = var_->getName();
   // Emit the initializer before adding the variable to scope, this prevents
   // the initializer from referencing the variable itself.
-  llvm::Value *initVal;
+  auto initVal = init_->codegen(codegenContext).get();
 
-  initVal = init_->codegen(codegenContext);
-  if (!initVal)
-    return nullptr;
-
-  llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(
-      currentFn, codegenContext.type_manager.getPtrType(), name_);
-  codegenContext.context.builder.CreateStore(initVal, Alloca);
+  auto Alloca = CreateEntryBlockAlloca(
+      currentFn, codegenContext.type_manager.ptrType, name);
+  builder.CreateStore(initVal, Alloca);
 
   // Remember the old variable binding so that we can restore the binding when
   // we unrecurse.
   codegenContext.lexenv.enterScope();
 
   // Remember this binding.
-  codegenContext.lexenv.addVar(name_, Alloca);
+  codegenContext.lexenv.addVar(name, Alloca);
 
   // Codegen the body, now that all vars are in scope.
-  llvm::Value *BodyVal = body_->codegen(codegenContext);
+  llvm::Value *BodyVal = body_->codegen(codegenContext).get();
   if (!BodyVal)
-    return nullptr;
+    return {};
 
   // Pop our variable from scope.
-  codegenContext.lexenv.exitScope();
+  codegenContext.lexenv.exitScope(false);
 
   // Return the body computation.
   return BodyVal;
+}
+
+TaggedLLVMVal Lambda::codegen(CodegenContext &codegenContext) {
+  auto ptrType = codegenContext.type_manager.ptrType;
+  auto &[context, builder, module] = codegenContext.context;
+  auto size = args_.size();
+  llvm::FunctionType *FT = codegenContext.type_manager.getStdFnType(size);
+
+  llvm::Function *F = llvm::Function::Create(
+      FT, llvm::Function::InternalLinkage, "__anon__closure", module);
+
+  // First argument is always the environment pointer for closures
+  auto &arg = *F->arg_begin();
+  arg.setName("_____env");
+
+  unsigned Idx = 0;
+  auto it1 = F->arg_begin(); // ugly, FIXME, merge with above
+  it1++;
+  for (; it1 != F->arg_end(); it1++)
+    it1->setName(args_[Idx++]);
+
+  auto BB = llvm::BasicBlock::Create(context, "entry", F);
+
+  codegenContext.lexenv.setInsertBlock(BB, true);
+
+  codegenContext.lexenv.enterScope(&*F->arg_begin());
+  auto it = F->arg_begin();
+  it++;
+  for (; it != F->arg_end(); it++) {
+    llvm::AllocaInst *Alloca =
+        CreateEntryBlockAlloca(F, ptrType, std::string(it->getName()));
+
+    builder.CreateStore(&*it, Alloca);
+
+    codegenContext.lexenv.addVar(std::string(it->getName()), Alloca);
+  }
+  auto RetVal = body_->codegen(codegenContext).get();
+  if (!RetVal) {
+    codegenContext.lexenv.exitScope(true);
+    // Error reading body, remove function.
+    F->eraseFromParent();
+    return {};
+  }
+  builder.CreateRet(RetVal);
+
+  codegenContext.lexenv.exitScope(true);
+  codegenContext.lexenv.ascend();
+
+  llvm::verifyFunction(*F);
+
+  // Optimizer::getFPM().run(*F, Optimizer::getFAM());
+  auto freeVarsAndNames = codegenContext.lexenv.popFreeVars();
+
+  std::vector<llvm::AllocaInst *> freeVars;
+  freeVars.reserve((freeVarsAndNames.size()));
+  for (auto &[_, inst] : freeVarsAndNames) {
+    freeVars.push_back(inst);
+  }
+
+  codegenContext.lexenv.setFnWrapperParameters(std::move(freeVars),
+                                               args_.size());
+  auto boxed = codegenContext.lexenv.constructClosureWrapper(F);
+
+  return boxed;
 }
