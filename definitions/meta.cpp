@@ -256,7 +256,8 @@ CodegenContext::SymbolTable::lookUpVar(const std::string &name) {
     if (auto it = globals_.find(name); it != globals_.end())
       return {it->second, CodegenContext::SymbolTable::VarStatus::Global};
     if (auto it = constantGlobals_.find(name); it != constantGlobals_.end())
-      return {it->second, CodegenContext::SymbolTable::VarStatus::Global};
+      return {it->second,
+              CodegenContext::SymbolTable::VarStatus::GlobalConstant};
   }
 
   return {ret, local};

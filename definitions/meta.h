@@ -611,7 +611,7 @@ public:
      * - Global: In the global scope
      * - NotFound: Variable not defined
      */
-    enum class VarStatus { Local, Captured, Global, NotFound };
+    enum class VarStatus { Local, Captured, Global, GlobalConstant, NotFound };
 
     /*
      * Look up a variable by name

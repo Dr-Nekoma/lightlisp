@@ -48,6 +48,10 @@ TaggedLLVMVal Variable::codegen(CodegenContext &codegenContext) {
     return builder.CreateLoad(codegenContext.type_manager.ptrType, global,
                               name_);
   }
+  case CodegenContext::SymbolTable::VarStatus::GlobalConstant: {
+    auto global = var.getGlob();
+    return global;
+  }
   case CodegenContext::SymbolTable::VarStatus::NotFound:
     throw std::runtime_error("Unknown variable name");
   }
@@ -158,6 +162,8 @@ TaggedLLVMVal Setq::codegen(CodegenContext &codegenContext) {
   case CodegenContext::SymbolTable::VarStatus::Global:
     builder.CreateStore(Val, var.getGlob());
     break;
+  case CodegenContext::SymbolTable::VarStatus::GlobalConstant:
+    throw std::runtime_error("Cannot setq constants");
   case CodegenContext::SymbolTable::VarStatus::NotFound:
     throw std::runtime_error("Unknown variable name");
   }
