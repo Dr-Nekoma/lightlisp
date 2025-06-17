@@ -293,7 +293,7 @@ llvm::Value *CodegenContext::TypeRegistry::copyValInto(llvm::Value *src,
   auto typeToStore = loadValType(src);
   storeValType(typeToStore, dest);
   auto &builder = parent_->context.builder;
-  auto *i8Arr8Ty = llvm::ArrayType::get(builder.getInt8Ty(), 8);
+  auto i8Arr8Ty = llvm::ArrayType::get(builder.getInt8Ty(), 8);
   auto srcPLPtr = getValPL(src);
   auto srcPL = builder.CreateLoad(i8Arr8Ty, srcPLPtr, "raw.payload");
   return storeValPL(srcPL, dest);

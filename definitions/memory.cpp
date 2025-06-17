@@ -94,9 +94,9 @@ CodegenContext::Memorymanager::defineArenaAlloc(IRGenContext &irgc) {
   // (Optionally, could add a bounds‐check before step 4 and trap if
 }
 
-llvm::Function *CodegenContext::Memorymanager::getmmapFn() { return mmapFn_; }
+llvm::Function *CodegenContext::Memorymanager::getMmapFn() { return mmapFn_; }
 
-llvm::Function *CodegenContext::Memorymanager::getmunmapFn() {
+llvm::Function *CodegenContext::Memorymanager::getMunmapFn() {
   return munmapFn_;
 }
 
@@ -144,7 +144,7 @@ void CodegenContext::Memorymanager::prepareArena(
       builder.CreateLoad(builder.getInt64Ty(), getArenaSizeGV(), "size");
   // call mmap(NULL, size, prot, flags, fd, off)
   auto basePtr = builder.CreateCall(
-      getmmapFn(),
+      getMmapFn(),
       {llvm::Constant::getNullValue(i8Ptr), sizeVal, prot, flags, fd, off},
       "arenaBaseRaw");
   // store into your global
@@ -161,5 +161,5 @@ void CodegenContext::Memorymanager::munmapArena(IRGenContext &irgc) {
   auto base = builder.CreateLoad(i8Ptr, getArenaPtrGV(), "base");
   auto sizeVal2 =
       builder.CreateLoad(builder.getInt64Ty(), getArenaSizeGV(), "size2");
-  builder.CreateCall(getmunmapFn(), {base, sizeVal2});
+  builder.CreateCall(getMunmapFn(), {base, sizeVal2});
 }

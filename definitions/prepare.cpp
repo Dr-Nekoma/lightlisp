@@ -30,7 +30,7 @@ llvm::Function *emitPanic(CodegenContext &codegenContext) {
   auto sizeVal = builder.CreateLoad(
       builder.getInt64Ty(), codegenContext.memory_manager.getArenaSizeGV(),
       "size");
-  builder.CreateCall(codegenContext.memory_manager.getmunmapFn(),
+  builder.CreateCall(codegenContext.memory_manager.getMunmapFn(),
                      {base, sizeVal});
   auto it = F->arg_begin();
   auto errcode = &*it;

@@ -75,9 +75,6 @@ TaggedLLVMVal Call::codegen(CodegenContext &codegenContext) {
     }
 
     auto call = builder.CreateCall(fn, ArgsV, "calltmp");
-    // if (callee_ == "car" || callee_ == "cdr") { // FIXME this can't be good
-    //   call->setOnlyReadsMemory();
-    // }
 
     return call;
   }
@@ -127,14 +124,12 @@ TaggedLLVMVal Def::codegen(CodegenContext &codegenContext) {
 }
 
 TaggedLLVMVal Setq::codegen(CodegenContext &codegenContext) {
-  // Special case '=' because we don't want to emit the LHS as an expression.
   auto &[context, builder, module] = codegenContext.context;
 
   auto name = var_->getName();
   auto [var, status] = codegenContext.lexenv.lookUpVar(name);
 
   llvm::Value *Val = newval_->codegen(codegenContext).get();
-  // Codegen the RHS.
   if (!Val)
     return {};
 
@@ -347,10 +342,10 @@ TaggedLLVMVal Lambda::codegen(CodegenContext &codegenContext) {
 
   // First argument is always the environment pointer for closures
   auto &arg = *F->arg_begin();
-  arg.setName("_____env");
+  arg.setName("_____env"); // FIXME -- normal naming for hidden args
 
   unsigned Idx = 0;
-  auto it1 = F->arg_begin(); // ugly, FIXME, merge with above
+  auto it1 = F->arg_begin(); // FIXME, merge with above
   it1++;
   for (; it1 != F->arg_end(); it1++)
     it1->setName(args_[Idx++]);

@@ -132,14 +132,14 @@ public:
      *
      * @return Function* - LLVM function for mmap system call
      */
-    llvm::Function *getmmapFn();
+    llvm::Function *getMmapFn();
 
     /*
      * Get the LLVM function pointer for munmap
      *
      * @return Function* - LLVM function for munmap system call
      */
-    llvm::Function *getmunmapFn();
+    llvm::Function *getMunmapFn();
 
     /*
      * Get the LLVM function pointer for trap (abort)
@@ -490,7 +490,21 @@ public:
      */
     llvm::Value *copyValInto(llvm::Value *src, llvm::Value *dest);
 
+    /*
+     * Generate code to check if a value is truthy
+     *
+     * @param what - Value to check for truthiness
+     * @return Value* - Boolean result of the truth check
+     */
     llvm::Value *emitTrueCheck(llvm::Value *what);
+
+    /*
+     * Generate code to check if a value has a specific type
+     *
+     * @param what - Value to check
+     * @param type - Type to check against
+     * @return Value* - Boolean result of the type check
+     */
     llvm::Value *emitTypeCheck(llvm::Value *what, BuiltInType type);
 
     // Common LLVM types used throughout the compiler
@@ -682,27 +696,73 @@ public:
     /*
      * Register a closure constructor
      *
-     * Sets up the code to build a closure at runtime, including
-     * capturing free variables.
+     * Creates a wrapper for a function pointer to be used as a closure.
      *
-     * @param fnVar - Variable for the function value, global or local
      * @param fnPtr - Function pointer for the closure body
-     * @param fnName - Name of the function
-     * @param freeVars - Variables captured from outer scopes
-     * @param arity - Number of arguments the function takes
+     * @return Value* - Generated closure wrapper value
      */
     llvm::Value *constructClosureWrapper(llvm::Function *fnPtr);
 
+    /*
+     * Set parameters for function wrapper construction
+     *
+     * Configures the free variables and argument count for the current
+     * function wrapper being constructed.
+     *
+     * @param vars - Vector of free variable allocations
+     * @param size - Number of arguments the function takes
+     */
     void setFnWrapperParameters(std::vector<llvm::AllocaInst *> &&vars,
                                 size_t size);
 
+    /*
+     * Set the current insertion block for IR generation
+     *
+     * Changes the current basic block where new instructions will be inserted.
+     *
+     * @param block - Basic block to set as current
+     * @param descend - Whether to push this block onto the block stack
+     */
     void setInsertBlock(llvm::BasicBlock *block, bool descend);
 
+    /*
+     * Get the current insertion block
+     *
+     * @return BasicBlock* - Current basic block for IR insertion
+     */
     llvm::BasicBlock *getCurrentBlock();
 
+    /*
+     * Pop the current insertion block from the stack
+     *
+     * Returns to the previous insertion block, used for nested block
+     * management.
+     */
     void ascend();
 
   private:
+    /*
+     * Set up internal runtime functions
+     *
+     * Initializes core runtime functions needed by the compiler including:
+     * - Memory management functions (trap/abort)
+     * - Debugging functions (print)
+     * - Type system support functions
+     * These are essential functions that the generated code relies on.
+     */
+    void setUpInternalFns();
+
+    /*
+     * Set up standard library functions
+     *
+     * Registers built-in Lisp functions and operators including:
+     * - Arithmetic operations (+, -, *, /, etc.)
+     * - Comparison operations (=, <, >, etc.)
+     * - List operations (car, cdr, cons, etc.)
+     * - Type predicates and (later) conversion functions
+     */
+    void setUpSTDLib();
+
     /*
      * EnvManager - Manages lexical environments for variable lookup
      *
