@@ -221,6 +221,8 @@ public:
      * - Int: Integer values
      * - Cons: Cons cells (pairs)
      * - Fn: Function values (closures)
+     * - Null: Null/nil value
+     * - T: Boolean true value
      */
     enum class BuiltInType { Int, Cons, Fn, Null, T };
 

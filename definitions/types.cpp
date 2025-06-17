@@ -74,6 +74,7 @@ int CodegenContext::TypeRegistry::toKind(BuiltInType type) {
   case CodegenContext::TypeRegistry::BuiltInType::T:
     return 10;
   }
+  throw std::runtime_error("Unreachable");
 }
 
 std::string &CodegenContext::TypeRegistry::toStrName(BuiltInType type) {
@@ -99,6 +100,7 @@ std::string &CodegenContext::TypeRegistry::toStrName(BuiltInType type) {
     return fnName;
   }
   }
+  throw std::runtime_error("Unreachable");
 }
 
 void CodegenContext::TypeRegistry::emitCheckType(llvm::Value *val,

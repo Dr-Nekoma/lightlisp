@@ -52,7 +52,7 @@ TaggedLLVMVal Variable::codegen(CodegenContext &codegenContext) {
     auto global = var.getGlob();
     return global;
   }
-  case CodegenContext::SymbolTable::VarStatus::NotFound:
+  default:
     throw std::runtime_error("Unknown variable name");
   }
 }
