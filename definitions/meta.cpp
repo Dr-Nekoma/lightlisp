@@ -60,6 +60,25 @@ void CodegenContext::SymbolTable::exitScope(bool isFnScope) {
   }
 }
 
+llvm::AllocaInst *CodegenContext::SymbolTable::createLocalVar(
+    llvm::Function *currentFn, llvm::Value *init, const std::string &name,
+    bool addScope) {
+  auto &builder = parent_->context.builder;
+
+  auto Alloca =
+      CreateEntryBlockAlloca(currentFn, parent_->type_manager.ptrType, name);
+  builder.CreateStore(init, Alloca);
+
+  // Remember the old variable binding so that we can restore the binding when
+  // we unrecurse.
+  if (addScope)
+    enterScope();
+
+  // Remember this binding.
+  addVar(name, Alloca);
+  return Alloca;
+}
+
 void CodegenContext::SymbolTable::addVar(const std::string &name,
                                          llvm::AllocaInst *inst) {
   named_values_.env_stack.back().emplace(name, inst);

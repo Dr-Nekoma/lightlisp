@@ -579,6 +579,9 @@ public:
      */
     bool isTopLevel();
 
+    llvm::AllocaInst *createLocalVar(llvm::Function *currentFn,
+                                     llvm::Value *init, const std::string &name,
+                                     bool addScope = false);
     /*
      * Look up a built-in function by name
      *

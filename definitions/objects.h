@@ -384,7 +384,7 @@ public:
    * @param args - Parameter names
    * @param body - Body expression of the function
    */
-  Def(std::unique_ptr<Variable> var, ObjPtr init)
+  Def(Variable var, ObjPtr init)
       : var_(std::move(var)), init_(std::move(init)) {}
 
   /*
@@ -404,8 +404,8 @@ public:
   TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::unique_ptr<Variable> var_; // Variable node for LHS
-  ObjPtr init_;                   // Initialization expression
+  Variable var_; // Variable node for LHS
+  ObjPtr init_;  // Initialization expression
 };
 
 /*
@@ -424,7 +424,7 @@ public:
    * @param fst - Variable node for the left-hand side
    * @param snd - Expression for the right-hand side value
    */
-  Setq(std::unique_ptr<Variable> var, ObjPtr newval)
+  Setq(Variable var, ObjPtr newval)
       : var_(std::move(var)), newval_(std::move(newval)) {}
 
   /*
@@ -443,8 +443,8 @@ public:
   TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::unique_ptr<Variable> var_; // Variable node for LHS
-  ObjPtr newval_;                 // Value expression for RHS
+  Variable var_;  // Variable node for LHS
+  ObjPtr newval_; // Value expression for RHS
 };
 
 class Lambda : public Object {
@@ -578,7 +578,7 @@ public:
    * @param init - Expression to initialize the variable
    * @param body - Expression to evaluate with the variable in scope
    */
-  Let(std::unique_ptr<Variable> var, ObjPtr init, ObjPtr body)
+  Let(Variable var, ObjPtr init, ObjPtr body)
       : var_(std::move(var)), init_(std::move(init)), body_(std::move(body)) {}
 
   /*
@@ -598,7 +598,7 @@ public:
   TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::unique_ptr<Variable> var_; // Variable node for LHS
-  ObjPtr init_;                   // Initialization expression
-  ObjPtr body_;                   // Body expression with variable in scope
+  Variable var_; // Variable node for LHS
+  ObjPtr init_;  // Initialization expression
+  ObjPtr body_;  // Body expression with variable in scope
 };

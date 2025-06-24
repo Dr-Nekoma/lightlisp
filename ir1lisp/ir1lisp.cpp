@@ -23,13 +23,13 @@ ObjectBuilder::ObjectBuilder() {
     auto it = view.begin();
     if (auto sym = std::get_if<Symbol>(&*it)) {
       auto genericVar = codeWalk(builder, *it);
-      if (auto var = dynamic_cast<Variable *>(genericVar.get())) {
+      if (auto varPtr = dynamic_cast<Variable *>(genericVar.get())) {
         genericVar.release();
-        auto varFst = std::unique_ptr<Variable>(var);
+        auto var = *varPtr;
         it++;
         auto snd = codeWalk(builder, *it);
         // assert(cdrCell->get<1>() == nullptr);
-        return std::make_unique<Setq>(std::move(varFst), std::move(snd));
+        return std::make_unique<Setq>(std::move(var), std::move(snd));
       }
       throw std::runtime_error("Cannnot setq what is not a variable");
     }
@@ -73,18 +73,18 @@ ObjectBuilder::ObjectBuilder() {
     auto it = view.begin();
     if (auto sym = std::get_if<Symbol>(&*it)) {
       auto genericVar = codeWalk(builder, *it);
-      if (auto var = dynamic_cast<Variable *>(genericVar.get())) {
+      if (auto varPtr = dynamic_cast<Variable *>(genericVar.get())) {
+        auto var = *varPtr;
         genericVar.release();
-        auto varFst = std::unique_ptr<Variable>(var);
         it++;
         auto init = codeWalk(builder, *it);
         if (name == "def") {
-          return std::make_unique<Def>(std::move(varFst), std::move(init));
+          return std::make_unique<Def>(std::move(var), std::move(init));
         }
         it++;
         auto body = codeWalk(builder, *it);
 
-        return std::make_unique<Let>(std::move(varFst), std::move(init),
+        return std::make_unique<Let>(std::move(var), std::move(init),
                                      std::move(body));
       } else {
         throw std::runtime_error("Declaration has to be for variable");

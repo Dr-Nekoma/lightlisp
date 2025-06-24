@@ -84,27 +84,9 @@ TaggedLLVMVal Call::codegen(CodegenContext &codegenContext) {
   return createClosurecall(codegenContext, closure, args_);
 }
 
-/*
-llvm::Value *Prototype::codegen(CodegenContext &codegenContext) {
-  auto ptrType = codegenContext.type_manager.getPtrType();
-  std::vector<llvm::Type *> types(args_.size(), ptrType);
-  llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, types, false);
-
-  llvm::Function *F =
-      llvm::Function::Create(FT, llvm::Function::ExternalLinkage, name_,
-                             codegenContext.context.module);
-
-  // Set names for all arguments.
-  unsigned Idx = 0;
-  for (auto &arg : F->args())
-    arg.setName(args_[Idx++]);
-
-  return F;
-}*/
-
 TaggedLLVMVal Def::codegen(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
-  auto &name = var_->getName();
+  auto &name = var_.getName();
 
   auto global = new llvm::GlobalVariable(
       codegenContext.context.module, codegenContext.type_manager.ptrType,
@@ -126,7 +108,7 @@ TaggedLLVMVal Def::codegen(CodegenContext &codegenContext) {
 TaggedLLVMVal Setq::codegen(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
 
-  auto name = var_->getName();
+  auto name = var_.getName();
   auto [var, status] = codegenContext.lexenv.lookUpVar(name);
 
   llvm::Value *Val = newval_->codegen(codegenContext).get();
@@ -300,39 +282,28 @@ TaggedLLVMVal Go::codegen(CodegenContext &codegenContext) {
 }
 
 TaggedLLVMVal Let::codegen(CodegenContext &codegenContext) {
-  auto &[context, builder, module] = codegenContext.context;
   llvm::Function *currentFn =
       codegenContext.lexenv.getCurrentBlock()->getParent();
-  auto &name = var_->getName();
   // Emit the initializer before adding the variable to scope, this prevents
   // the initializer from referencing the variable itself.
   auto initVal = init_->codegen(codegenContext).get();
 
-  auto Alloca = CreateEntryBlockAlloca(
-      currentFn, codegenContext.type_manager.ptrType, name);
-  builder.CreateStore(initVal, Alloca);
-
-  // Remember the old variable binding so that we can restore the binding when
-  // we unrecurse.
-  codegenContext.lexenv.enterScope();
-
-  // Remember this binding.
-  codegenContext.lexenv.addVar(name, Alloca);
+  codegenContext.lexenv.createLocalVar(currentFn, initVal, var_.getName(),
+                                       true);
 
   // Codegen the body, now that all vars are in scope.
-  llvm::Value *BodyVal = body_->codegen(codegenContext).get();
-  if (!BodyVal)
+  llvm::Value *bodyVal = body_->codegen(codegenContext).get();
+  if (!bodyVal)
     return {};
 
   // Pop our variable from scope.
   codegenContext.lexenv.exitScope(false);
 
   // Return the body computation.
-  return BodyVal;
+  return bodyVal;
 }
 
 TaggedLLVMVal Lambda::codegen(CodegenContext &codegenContext) {
-  auto ptrType = codegenContext.type_manager.ptrType;
   auto &[context, builder, module] = codegenContext.context;
   auto size = args_.size();
   llvm::FunctionType *FT = codegenContext.type_manager.getStdFnType(size);
@@ -357,14 +328,9 @@ TaggedLLVMVal Lambda::codegen(CodegenContext &codegenContext) {
   codegenContext.lexenv.enterScope(&*F->arg_begin());
   auto it = F->arg_begin();
   it++;
-  for (; it != F->arg_end(); it++) {
-    llvm::AllocaInst *Alloca =
-        CreateEntryBlockAlloca(F, ptrType, std::string(it->getName()));
+  for (; it != F->arg_end(); it++)
+    codegenContext.lexenv.createLocalVar(F, &*it, it->getName().str());
 
-    builder.CreateStore(&*it, Alloca);
-
-    codegenContext.lexenv.addVar(std::string(it->getName()), Alloca);
-  }
   auto RetVal = body_->codegen(codegenContext).get();
   if (!RetVal) {
     codegenContext.lexenv.exitScope(true);
