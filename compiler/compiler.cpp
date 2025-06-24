@@ -13,7 +13,7 @@ TaggedLLVMVal Number::codegen(CodegenContext &codegenContext) {
   return boxed;
 }
 
-TaggedLLVMVal Variable::codegen(CodegenContext &codegenContext) {
+TaggedLLVMVal Symbol::codegen(CodegenContext &codegenContext) {
   if (auto fn = codegenContext.lexenv.getBuiltInFn(name_); fn) {
     return fn;
   }
@@ -319,7 +319,7 @@ TaggedLLVMVal Lambda::codegen(CodegenContext &codegenContext) {
   auto it1 = F->arg_begin(); // FIXME, merge with above
   it1++;
   for (; it1 != F->arg_end(); it1++)
-    it1->setName(args_[Idx++]);
+    it1->setName(args_[Idx++].getName());
 
   auto BB = llvm::BasicBlock::Create(context, "entry", F);
 

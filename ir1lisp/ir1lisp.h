@@ -65,7 +65,7 @@ struct ObjectBuilder {
  * @param syntax: Pointer to syntax object representing the argument list
  * @return: Vector of argument names as strings
  */
-std::vector<std::string> parseArgList(SyntaxObject *syntax);
+std::vector<Symbol> parseArgList(SyntaxObject *syntax);
 
 /*
  * lispListToVec - Convert Lisp list syntax to vector of IR1 objects

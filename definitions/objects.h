@@ -69,27 +69,51 @@ private:
  * Symbol - Represents symbolic names in Lisp syntax
  *
  * Stores symbolic identifiers used in parsing. These are converted
- * to Variable nodes during semantic analysis for variable references
+ * to Symbol nodes during semantic analysis for variable references
  * or used directly for special forms and function names.
  */
-class Symbol {
+/*
+ * Symbol - AST node for variable references
+ *
+ * Represents references to variables in the Lisp code. Handles
+ * variable lookup through different scopes (local, captured, global)
+ * and generates appropriate load instructions.
+ */
+class Symbol : public Object {
 public:
   /*
-   * Construct a Symbol with the given name
+   * Construct a Symbol node with the given name
    *
-   * @param value - String name of the symbol
+   * @param name - Name of the variable to reference
    */
-  explicit Symbol(std::string value) : value_(std::move(value)) {}
+  Symbol(std::string name) : name_(std::move(name)) {}
 
   /*
-   * Get the symbol's name
+   * Symbol::codegen - Generate LLVM IR for variable references
    *
-   * @return const string& - Reference to the symbol name
+   * Resolves variable references by:
+   * 1. Checking if the name refers to a built-in function
+   * 2. Looking up the variable in the symbol table
+   * 3. Loading the value based on scope (local, captured, global)
+   *
+   * For captured variables, updates closure environment tracking information.
+   *
+   * @param codegenContext - Provides LLVM context, builder, module, and lexical
+   * environment
+   * @return TaggedLLVMVal - Referenced variable value as LLVM IR
+   * @throws std::runtime_error - If variable not found
    */
-  const std::string &getName() { return value_; }
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+
+  /*
+   * Get the variable name
+   *
+   * @return const string& - Reference to the variable name
+   */
+  [[nodiscard]] const std::string &getName() const { return name_; }
 
 private:
-  std::string value_; /* The symbol's string name */
+  const std::string name_; // Name of the variable
 };
 
 /*
@@ -267,50 +291,6 @@ private:
 };
 
 /*
- * Variable - AST node for variable references
- *
- * Represents references to variables in the Lisp code. Handles
- * variable lookup through different scopes (local, captured, global)
- * and generates appropriate load instructions.
- */
-class Variable : public Object {
-public:
-  /*
-   * Construct a Variable node with the given name
-   *
-   * @param name - Name of the variable to reference
-   */
-  Variable(std::string name) : name_(std::move(name)) {}
-
-  /*
-   * Variable::codegen - Generate LLVM IR for variable references
-   *
-   * Resolves variable references by:
-   * 1. Checking if the name refers to a built-in function
-   * 2. Looking up the variable in the symbol table
-   * 3. Loading the value based on scope (local, captured, global)
-   *
-   * For captured variables, updates closure environment tracking information.
-   *
-   * @param codegenContext - Provides LLVM context, builder, module, and lexical
-   * environment
-   * @return TaggedLLVMVal - Referenced variable value as LLVM IR
-   * @throws std::runtime_error - If variable not found
-   */
-  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
-
-  /*
-   * Get the variable name
-   *
-   * @return const string& - Reference to the variable name
-   */
-  [[nodiscard]] const std::string &getName() const { return name_; }
-
-private:
-  const std::string name_; // Name of the variable
-};
-
-/*
  * Call - AST node for function calls
  *
  * Represents function calls and closure invocations. Handles both
@@ -351,23 +331,6 @@ private:
   std::vector<ObjPtr> args_; // Argument expressions
 };
 
-/// PrototypeAST - This class represents the "prototype" for a function,
-/// which captures its name, and its argument names (thus implicitly the number
-/// of arguments the function takes).
-/*class Prototype : public Object {
-public:
-  Prototype(std::string name, std::vector<std::string> args)
-      : name_(std::move(name)), args_(std::move(args)) {}
-
-  [[nodiscard]] const std::string &getName() const { return name_; }
-
-  llvm::Value *codegen(CodegenContext &CodegenContext) override;
-
-private:
-  std::string name_;
-  std::vector<std::string> args_;
-};*/
-
 /*
  * Function - AST node for function definitions
  *
@@ -384,8 +347,7 @@ public:
    * @param args - Parameter names
    * @param body - Body expression of the function
    */
-  Def(Variable var, ObjPtr init)
-      : var_(std::move(var)), init_(std::move(init)) {}
+  Def(Symbol var, ObjPtr init) : var_(std::move(var)), init_(std::move(init)) {}
 
   /*
    * Function::codegen - Generate LLVM IR for function definitions
@@ -404,8 +366,8 @@ public:
   TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
-  Variable var_; // Variable node for LHS
-  ObjPtr init_;  // Initialization expression
+  Symbol var_;  // Symbol node for LHS
+  ObjPtr init_; // Initialization expression
 };
 
 /*
@@ -421,10 +383,10 @@ public:
    * Construct a Setq node
    *
    * @param name - Name of the variable being assigned
-   * @param fst - Variable node for the left-hand side
+   * @param fst - Symbol node for the left-hand side
    * @param snd - Expression for the right-hand side value
    */
-  Setq(Variable var, ObjPtr newval)
+  Setq(Symbol var, ObjPtr newval)
       : var_(std::move(var)), newval_(std::move(newval)) {}
 
   /*
@@ -443,20 +405,20 @@ public:
   TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
-  Variable var_;  // Variable node for LHS
+  Symbol var_;    // Symbol node for LHS
   ObjPtr newval_; // Value expression for RHS
 };
 
 class Lambda : public Object {
 public:
-  Lambda(std::vector<std::string> &&args, ObjPtr body)
+  Lambda(std::vector<Symbol> &&args, ObjPtr body)
       : args_(std::move(args)), body_(std::move(body)) {}
 
   TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
-  std::vector<std::string> args_; // Parameter names
-  ObjPtr body_;                   // Function body expression
+  std::vector<Symbol> args_; // Parameter names
+  ObjPtr body_;              // Function body expression
 };
 /*
  * If - AST node for conditional expressions
@@ -578,7 +540,7 @@ public:
    * @param init - Expression to initialize the variable
    * @param body - Expression to evaluate with the variable in scope
    */
-  Let(Variable var, ObjPtr init, ObjPtr body)
+  Let(Symbol var, ObjPtr init, ObjPtr body)
       : var_(std::move(var)), init_(std::move(init)), body_(std::move(body)) {}
 
   /*
@@ -598,7 +560,7 @@ public:
   TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
 
 private:
-  Variable var_; // Variable node for LHS
-  ObjPtr init_;  // Initialization expression
-  ObjPtr body_;  // Body expression with variable in scope
+  Symbol var_;  // Symbol node for LHS
+  ObjPtr init_; // Initialization expression
+  ObjPtr body_; // Body expression with variable in scope
 };

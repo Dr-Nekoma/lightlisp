@@ -21,9 +21,9 @@ ObjectBuilder::ObjectBuilder() {
                          SyntaxObject *syntax) -> ObjPtr {
     auto view = Cell::ListView(syntax);
     auto it = view.begin();
-    if (auto sym = std::get_if<Symbol>(&*it)) {
+    if (std::holds_alternative<Symbol>(*it)) {
       auto genericVar = codeWalk(builder, *it);
-      if (auto varPtr = dynamic_cast<Variable *>(genericVar.get())) {
+      if (auto varPtr = dynamic_cast<Symbol *>(genericVar.get())) {
         genericVar.release();
         auto var = *varPtr;
         it++;
@@ -71,9 +71,9 @@ ObjectBuilder::ObjectBuilder() {
                          SyntaxObject *syntax) -> ObjPtr {
     auto view = Cell::ListView(syntax);
     auto it = view.begin();
-    if (auto sym = std::get_if<Symbol>(&*it)) {
+    if (std::holds_alternative<Symbol>(*it)) {
       auto genericVar = codeWalk(builder, *it);
-      if (auto varPtr = dynamic_cast<Variable *>(genericVar.get())) {
+      if (auto varPtr = dynamic_cast<Symbol *>(genericVar.get())) {
         auto var = *varPtr;
         genericVar.release();
         it++;
@@ -116,15 +116,15 @@ ObjectBuilder::ObjectBuilder() {
   builders_["lambda"] = lambda_builder;
 }
 
-std::vector<std::string> parseArgList(SyntaxObject *syntax) {
-  std::vector<std::string> res;
+std::vector<Symbol> parseArgList(SyntaxObject *syntax) {
+  std::vector<Symbol> res;
   if (!syntax)
     return res;
 
   auto view = Cell::ListView(syntax);
   for (auto &node : view) {
     if (auto sym = std::get_if<Symbol>(&node)) {
-      res.emplace_back(sym->getName());
+      res.emplace_back(*sym);
     } else {
       throw std::runtime_error("Not a valid arg name");
     }
@@ -146,9 +146,9 @@ std::vector<ObjPtr> lispListToVec(ObjectBuilder &builder,
 
 ObjPtr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax) {
   if (Number *number = std::get_if<Number>(&syntax)) {
-    return std::make_unique<Number>(number->getValue());
+    return std::make_unique<Number>(std::move(*number));
   } else if (Symbol *symbol = std::get_if<Symbol>(&syntax)) {
-    return std::make_unique<Variable>(symbol->getName());
+    return std::make_unique<Symbol>(std::move(*symbol));
   } else {
     Cell cell = std::get<Cell>(std::move(syntax));
     auto &fst = cell.get<0>();
