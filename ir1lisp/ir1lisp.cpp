@@ -15,8 +15,7 @@ ObjectBuilder::ObjectBuilder() {
     assert(it == view.end());
     auto res = std::make_unique<If<NotExpanded>>(
         std::move(cond), std::move(thenClause), std::move(elseClause));
-    return ExprPtr<NotExpanded>(std::make_unique<If<NotExpanded>>(
-        std::move(cond), std::move(thenClause), std::move(elseClause)));
+    return ExprPtr<NotExpanded>(std::move(res));
   };
   builders_["if"] = if_builder;
 

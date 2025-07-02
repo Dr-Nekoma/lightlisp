@@ -12,7 +12,6 @@
 #include "llvmincludes.h"
 #include "util.h"
 
-class Object;
 class Number; // constant
 class Symbol; // constant
 class Cell;
