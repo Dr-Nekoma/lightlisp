@@ -70,9 +70,9 @@ static void prepareTopLevelFns(CodegenContext &codegenContext,
     auto syntax = parser.Read();
     if (!syntax)
       continue;
-    auto ast = ir1LispTransform(std::move(syntax));
-
-    ast->codegen(codegenContext);
+    auto astir1 = ir1LispTransform(std::move(syntax));
+    auto astir2 = ir2LispTransform(std::move(astir1));
+    codegen(codegenContext, astir2);
   }
 }
 

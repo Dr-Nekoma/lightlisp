@@ -439,8 +439,9 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
       {std::nullopt}, std::nullopt);
 }
 
-llvm::Value *createClosurecall(CodegenContext &codegenContext,
-                               llvm::Value *inst, std::vector<ObjPtr> &args) {
+llvm::CallInst *createClosurecall(CodegenContext &codegenContext,
+                                  llvm::Value *inst,
+                                  std::vector<ExprPtr<Expanded>> &args) {
   // if (CalleeF->arg_size() != args_.size())
   //   throw std::runtime_error("Incorrect # arguments passed");
 
@@ -450,18 +451,18 @@ llvm::Value *createClosurecall(CodegenContext &codegenContext,
 
   auto fnPtr = codegenContext.type_manager.loadClosureFn(inst);
 
-  std::vector<llvm::Value *> ArgsV;
-  for (auto &Arg : args) {
-    ArgsV.push_back(Arg->codegen(codegenContext).get());
-    if (!ArgsV.back())
+  std::vector<llvm::Value *> argsV;
+  for (auto &arg : args) {
+    argsV.push_back(codegen(codegenContext, arg).get<llvm::Value *>());
+    if (!argsV.back())
       return nullptr;
   }
 
   // let's skip the arg check for now
   std::vector<llvm::Value *> envArgs{envGEP};
-  envArgs.insert(envArgs.end(), ArgsV.begin(), ArgsV.end());
+  envArgs.insert(envArgs.end(), argsV.begin(), argsV.end());
   llvm::FunctionType *FT =
-      codegenContext.type_manager.getStdFnType(ArgsV.size());
+      codegenContext.type_manager.getStdFnType(argsV.size());
 
   auto call = builder.CreateCall(FT, fnPtr, envArgs, "closure.res");
 

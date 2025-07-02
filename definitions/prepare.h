@@ -1,8 +1,8 @@
 #pragma once
 #include "Optimizer.h"
+#include "compiler.h"
 #include "ir1lisp.h"
 #include "meta.h"
-#include "objects.h"
 #include "util.h"
 #include <optional>
 

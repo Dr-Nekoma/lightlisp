@@ -1,4 +1,5 @@
 #include "parser.h"
+#include "compiler.h"
 #include <variant>
 
 Parser::Parser(Tokenizer &&tok) : tokenizer_(tok) {}

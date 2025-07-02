@@ -18,19 +18,9 @@ TaggedLLVMVal::TaggedLLVMVal(llvm::Value *val) : val_(val) {}
 
 TaggedLLVMVal::TaggedLLVMVal(llvm::Function *fn) : val_(fn) {}
 
-[[nodiscard]] llvm::Value *TaggedLLVMVal::get() const {
-  if (isFn())
-    return std::get<llvm::Function *>(val_);
-  return std::get<llvm::Value *>(val_);
-}
+TaggedLLVMVal::TaggedLLVMVal(llvm::CallInst *call) : val_(call) {}
 
-[[nodiscard]] llvm::Function *TaggedLLVMVal::getFn() const {
-  return std::get<llvm::Function *>(val_);
-}
-
-[[nodiscard]] bool TaggedLLVMVal::isFn() const {
-  return std::holds_alternative<llvm::Function *>(val_);
-}
+TaggedLLVMVal::TaggedLLVMVal(llvm::PHINode *phi) : val_(phi) {}
 
 llvm::AllocaInst *CreateEntryBlockAlloca(llvm::Function *currentFn,
                                          llvm::Type *type,

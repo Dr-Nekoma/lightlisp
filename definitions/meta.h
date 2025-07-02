@@ -13,18 +13,9 @@
 #include "util.h"
 
 class Object;
-// class Scope;
-class Number;  // constant
-class Symbol;  // constant
-class Boolean; // constant ?
-class Function;
-class String;
-class LambdaFunction;
+class Number; // constant
+class Symbol; // constant
 class Cell;
-class SpecialForm;
-// class LispError;
-// class RuntimeError;
-// class SyntaxError;
 
 /*
  * SyntaxObject - Variant type for parser result objects
@@ -35,13 +26,60 @@ class SpecialForm;
  */
 using SyntaxObject = std::variant<Number, Symbol, Cell>;
 
-/*
- * ObjPtr - Smart pointer for AST nodes
- *
- * Provides ownership semantics for AST nodes with automatic
- * memory management.
- */
-using ObjPtr = std::unique_ptr<Object>;
+struct NotExpanded {};
+struct Expanded {};
+struct EmptyBase {};
+
+template <typename T>
+concept Phase = std::is_same_v<T, NotExpanded> || std::is_same_v<T, Expanded>;
+
+template <Phase P> class Let;
+template <Phase P> class Def;
+template <Phase P> class If;
+template <Phase P> class Goto;
+template <Phase P> class Go;
+template <Phase P> class Setq;
+template <Phase P> class Lambda;
+template <Phase P> class Call;
+
+// Explicit forward spec
+template <> class Def<NotExpanded>;
+template <> class Def<Expanded>;
+template <> class Setq<NotExpanded>;
+template <> class Setq<Expanded>;
+template <> class If<NotExpanded>;
+template <> class If<Expanded>;
+template <> class Goto<NotExpanded>;
+template <> class Goto<Expanded>;
+template <> class Go<NotExpanded>;
+template <> class Go<Expanded>;
+template <> class Let<NotExpanded>;
+template <> class Let<Expanded>;
+template <> class Lambda<NotExpanded>;
+template <> class Lambda<Expanded>;
+template <> class Call<NotExpanded>;
+template <> class Call<Expanded>;
+
+using AtomPtr = std::variant<std::unique_ptr<Symbol>, std::unique_ptr<Number>>;
+
+template <Phase P>
+using SpFPtr =
+    std::variant<std::unique_ptr<Let<P>>, std::unique_ptr<Def<P>>,
+                 std::unique_ptr<If<P>>, std::unique_ptr<Goto<P>>,
+                 std::unique_ptr<Go<P>>, std::unique_ptr<Setq<P>>,
+                 std::unique_ptr<Lambda<P>>, std::unique_ptr<Call<P>>>;
+
+template <Phase P> using ExprPtr = std::variant<AtomPtr, SpFPtr<P>>;
+
+class Macroform {
+public:
+  virtual ~Macroform() {}
+  virtual ExprPtr<Expanded> expand() = 0;
+};
+
+using MacroPtr = std::unique_ptr<Macroform>;
+using IR1Expr = std::variant<ExprPtr<NotExpanded>, MacroPtr>;
+using FinalExpr = ExprPtr<Expanded>;
 
 /*
  * IntOpFn - Function type for integer operations
@@ -851,8 +889,9 @@ public:
  * @param args - Arguments to the call
  * @return Value* - Result of the call
  */
-llvm::Value *createClosurecall(CodegenContext &codegenContext,
-                               llvm::Value *inst, std::vector<ObjPtr> &args);
+llvm::CallInst *createClosurecall(CodegenContext &codegenContext,
+                                  llvm::Value *inst,
+                                  std::vector<ExprPtr<Expanded>> &args);
 
 /*
  * Type namespace - Type constants for cleaner code

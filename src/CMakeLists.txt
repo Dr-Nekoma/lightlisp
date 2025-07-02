@@ -7,6 +7,7 @@ target_include_directories(lightlisp
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/definitions
     ${CMAKE_SOURCE_DIR}/ir1lisp
+    ${CMAKE_SOURCE_DIR}/ir2lisp
     ${CMAKE_SOURCE_DIR}/optimizer
 )
 
@@ -16,6 +17,7 @@ target_link_libraries(lightlisp
     parser
     compiler
     ir1lisp
+    ir2lisp
     optimizer
     definitions
     ${llvm_libs}

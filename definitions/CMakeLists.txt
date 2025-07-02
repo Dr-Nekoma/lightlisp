@@ -11,4 +11,5 @@ target_include_directories(definitions
   ${CMAKE_SOURCE_DIR}/compiler
   ${CMAKE_SOURCE_DIR}/optimizer
   ${CMAKE_SOURCE_DIR}/ir1lisp
+  ${CMAKE_SOURCE_DIR}/ir2lisp
 )

@@ -1,5 +1,6 @@
+#pragma once
+
 #include "meta.h"
-#include "objects.h"
 
 /*
  * ObjectBuilder - Factory class for transforming Lisp syntax objects into IR1
@@ -21,8 +22,8 @@ struct ObjectBuilder {
    *
    * Returns: ObjPtr to the constructed IR1 object
    */
-  using BuildMethod = ObjPtr (*)(ObjectBuilder &, std::string &name,
-                                 SyntaxObject *);
+  using BuildMethod = IR1Expr (*)(ObjectBuilder &, std::string &name,
+                                  SyntaxObject *);
 
   /*
    * Constructor - Initializes the object builder
@@ -43,7 +44,7 @@ struct ObjectBuilder {
    * @param syntax: Reference to the syntax object to transform
    * @return: Smart pointer to the constructed IR1 object
    */
-  ObjPtr build(SyntaxObject &syntax);
+  IR1Expr build(SyntaxObject &syntax);
 
   /*
    * builders_ - Registry mapping form names to build methods
@@ -78,7 +79,8 @@ std::vector<Symbol> parseArgList(SyntaxObject *syntax);
  * @param syntax: Pointer to syntax object representing a Lisp list
  * @return: Vector of smart pointers to transformed IR1 objects
  */
-std::vector<ObjPtr> lispListToVec(ObjectBuilder &builder, SyntaxObject *syntax);
+std::vector<IR1Expr> lispListToVec(ObjectBuilder &builder,
+                                   SyntaxObject *syntax);
 
 /*
  * codeWalk - Recursive syntax tree traversal and transformation
@@ -92,7 +94,7 @@ std::vector<ObjPtr> lispListToVec(ObjectBuilder &builder, SyntaxObject *syntax);
  * @param syntax: Reference to syntax object to walk and transform
  * @return: Smart pointer to the transformed IR1 object
  */
-ObjPtr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax);
+IR1Expr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax);
 
 /*
  * ir1LispTransform - Top-level IR1 transformation entry point
@@ -105,4 +107,4 @@ ObjPtr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax);
  * @param syntax: Unique pointer to root syntax object (transfers ownership)
  * @return: Smart pointer to root IR1 object
  */
-ObjPtr ir1LispTransform(std::unique_ptr<SyntaxObject> syntax);
+IR1Expr ir1LispTransform(std::unique_ptr<SyntaxObject> syntax);

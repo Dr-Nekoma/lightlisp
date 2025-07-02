@@ -1,30 +1,9 @@
 #pragma once
+
+#include "ir1lisp.h"
+#include "ir2lisp.h"
 #include "meta.h"
 #include "util.h"
-
-/*
- * Object - Base class for all AST nodes
- *
- * Abstract base class that defines the interface for all nodes in the
- * abstract syntax tree. Each node must be able to generate LLVM IR
- * for itself through the codegen method.
- */
-class Object {
-public:
-  virtual ~Object() {}
-
-  /*
-   * Generate LLVM IR for this AST node
-   *
-   * Pure virtual function that must be implemented by all AST node types.
-   * Transforms the high-level AST representation into LLVM intermediate
-   * representation.
-   *
-   * @param CodegenContext - Context providing LLVM infrastructure and state
-   * @return TaggedLLVMVal - Generated LLVM value for this node
-   */
-  virtual TaggedLLVMVal codegen(CodegenContext &CodegenContext) = 0;
-};
 
 /*
  * Number - AST node for integer literals
@@ -32,14 +11,14 @@ public:
  * Represents literal integer values in the Lisp source code.
  * Stores the numeric value and generates LLVM IR for boxed integers.
  */
-class Number : public Object {
+class Number {
 public:
   /*
    * Construct a Number node with the given integer value
    *
    * @param value - Integer value (defaults to 0)
    */
-  explicit Number(int64_t value = 0) : value_(value) {}
+  explicit Number(int64_t value);
 
   /*
    * Number::codegen - Generate LLVM IR for integer literals
@@ -50,16 +29,16 @@ public:
    *
    * @param codegenContext - Provides LLVM context, builder, module, and type
    * management
-   * @return TaggedLLVMVal - Boxed integer value as LLVM IR
+   * @return llvm::Value* - Boxed integer value as LLVM IR
    */
-  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+  llvm::Value *codegen(CodegenContext &CodegenContext);
 
   /*
    * Get the numeric value of this literal
    *
    * @return int64_t - The integer value
    */
-  [[nodiscard]] int64_t getValue() const { return value_; }
+  [[nodiscard]] int64_t getValue() const;
 
 private:
   int64_t value_; // The stored integer value
@@ -79,14 +58,14 @@ private:
  * variable lookup through different scopes (local, captured, global)
  * and generates appropriate load instructions.
  */
-class Symbol : public Object {
+class Symbol {
 public:
   /*
    * Construct a Symbol node with the given name
    *
    * @param name - Name of the variable to reference
    */
-  Symbol(std::string name) : name_(std::move(name)) {}
+  explicit Symbol(std::string name);
 
   /*
    * Symbol::codegen - Generate LLVM IR for variable references
@@ -100,17 +79,17 @@ public:
    *
    * @param codegenContext - Provides LLVM context, builder, module, and lexical
    * environment
-   * @return TaggedLLVMVal - Referenced variable value as LLVM IR
+   * @return llvm::Value* - Referenced variable value as LLVM IR
    * @throws std::runtime_error - If variable not found
    */
-  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal load(CodegenContext &CodegenContext);
 
   /*
    * Get the variable name
    *
    * @return const string& - Reference to the variable name
    */
-  [[nodiscard]] const std::string &getName() const { return name_; }
+  [[nodiscard]] const std::string &getName() const;
 
 private:
   const std::string name_; // Name of the variable
@@ -128,7 +107,7 @@ public:
   /*
    * Default constructor creates an empty cell
    */
-  Cell() : head_(nullptr), tail_(nullptr) {}
+  Cell();
 
   /*
    * Construct a cell with head and tail elements
@@ -136,8 +115,7 @@ public:
    * @param head - First element of the pair (car)
    * @param tail - Second element of the pair (cdr)
    */
-  Cell(std::unique_ptr<SyntaxObject> head, std::unique_ptr<SyntaxObject> tail)
-      : head_(std::move(head)), tail_(std::move(tail)) {}
+  Cell(std::unique_ptr<SyntaxObject> head, std::unique_ptr<SyntaxObject> tail);
 
   /*
    * Template accessor for cell elements
@@ -167,31 +145,28 @@ public:
      *
      * @param node - Pointer to current list node
      */
-    explicit ListIterator(SyntaxObject *node) : node_(node) {}
+    explicit ListIterator(SyntaxObject *node);
 
     /*
      * Dereference operator - get the head of current cell
      *
      * @return reference - Reference to the head element
      */
-    reference operator*() const {
-      auto &ret = std::get<Cell>(*node_);
-      return *ret.head_;
-    }
+    reference operator*() const;
 
     /*
      * Arrow operator for member access
      *
      * @return pointer - Pointer to current node
      */
-    pointer operator->() const { return std::addressof(*node_); }
+    pointer operator->() const;
 
     /*
      * Get the current cell pointer
      *
      * @return pointer - Pointer to current node
      */
-    pointer getCell() { return node_; }
+    pointer getCell();
 
     /*
      * Equality comparison
@@ -199,7 +174,7 @@ public:
      * @param o - Other iterator to compare with
      * @return bool - True if iterators point to same node
      */
-    bool operator==(ListIterator const &o) const { return node_ == o.node_; }
+    bool operator==(ListIterator const &o) const;
 
     /*
      * Inequality comparison
@@ -207,7 +182,7 @@ public:
      * @param o - Other iterator to compare with
      * @return bool - True if iterators point to different nodes
      */
-    bool operator!=(ListIterator const &o) const { return !(*this == o); }
+    bool operator!=(ListIterator const &o) const;
 
     /*
      * Pre-increment operator - advance to next cell
@@ -217,28 +192,14 @@ public:
      * @return ListIterator& - Reference to this iterator
      * @throws std::runtime_error - If incrementing past end or improper list
      */
-    ListIterator &operator++() {
-      if (!node_)
-        throw std::runtime_error("increment past end");
-      auto c = std::get_if<Cell>(node_);
-      if (!c)
-        throw std::runtime_error("not a proper list");
-      node_ = c->get<1>().get(); /* Follow cdr pointer */
-      if (node_ && !std::holds_alternative<Cell>(*node_))
-        throw std::runtime_error("not a proper list");
-      return *this;
-    }
+    ListIterator &operator++();
 
     /*
      * Post-increment operator
      *
      * @return ListIterator - Copy of iterator before increment
      */
-    ListIterator operator++(int) {
-      auto tmp = *this;
-      ++*this;
-      return tmp;
-    }
+    ListIterator operator++(int);
 
   private:
     SyntaxObject *node_; /* Current position in the list */
@@ -257,15 +218,14 @@ public:
      * @param head - Start of the list
      * @param tail - End of the list (usually nullptr)
      */
-    ListView(SyntaxObject *head, SyntaxObject *tail)
-        : head_(head), tail_(tail) {}
+    ListView(SyntaxObject *head, SyntaxObject *tail);
 
     /*
      * Construct a view with just the head (tail defaults to nullptr)
      *
      * @param head - Start of the list
      */
-    ListView(SyntaxObject *head) : head_(head), tail_(nullptr) {}
+    ListView(SyntaxObject *head);
 
     SyntaxObject *head_; /* Start of the list */
     SyntaxObject *tail_; /* End of the list */
@@ -275,19 +235,41 @@ public:
      *
      * @return ListIterator - Iterator pointing to first element
      */
-    [[nodiscard]] ListIterator begin() const { return ListIterator(head_); }
+    [[nodiscard]] ListIterator begin() const;
 
     /*
      * Get iterator to the end of the list
      *
      * @return ListIterator - Iterator pointing past last element
      */
-    [[nodiscard]] ListIterator end() const { return ListIterator(tail_); }
+    [[nodiscard]] ListIterator end() const;
   };
 
 private:
   std::unique_ptr<SyntaxObject> head_; /* First element (car) */
   std::unique_ptr<SyntaxObject> tail_; /* Second element (cdr) */
+};
+
+template <> class Lambda<Expanded> : public EmptyBase {
+public:
+  Lambda(std::vector<Symbol> &&args, ExprPtr<Expanded> body);
+
+  llvm::Value *codegen(CodegenContext &context);
+
+private:
+  std::vector<Symbol> args_;
+  ExprPtr<Expanded> body_;
+};
+
+template <> class Lambda<NotExpanded> : public Macroform {
+public:
+  Lambda(std::vector<Symbol> &&args, IR1Expr body);
+
+  ExprPtr<Expanded> expand() override;
+
+private:
+  std::vector<Symbol> args_;
+  IR1Expr body_;
 };
 
 /*
@@ -297,16 +279,15 @@ private:
  * direct function calls (built-ins and compiled functions) and
  * user-defined closures that require environment passing.
  */
-class Call : public Object {
+template <> class Call<Expanded> : public EmptyBase {
 public:
   /*
-   * Construct a Call node
+   * Construct a Call node for Expanded phase
    *
    * @param callee - Expression that evaluates to the function to call
    * @param args - Vector of argument expressions
    */
-  Call(ObjPtr callee, std::vector<ObjPtr> args)
-      : callee_(std::move(callee)), args_(std::move(args)) {}
+  Call(ExprPtr<Expanded> callee, std::vector<ExprPtr<Expanded>> args);
 
   /*
    * Call::codegen - Generate LLVM IR for function calls and closure invocations
@@ -321,14 +302,31 @@ public:
    *
    * @param codegenContext - Provides LLVM context, builder, module, and type
    * management
-   * @return TaggedLLVMVal - Function call result as LLVM IR
+   * @return llvm::CallInst* - Function call result as LLVM IR
    * @throws std::runtime_error - If argument count mismatch
    */
-  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+  llvm::CallInst *emit(CodegenContext &CodegenContext);
 
 private:
-  ObjPtr callee_;            // Function expression to call
-  std::vector<ObjPtr> args_; // Argument expressions
+  ExprPtr<Expanded> callee_;
+  std::vector<ExprPtr<Expanded>> args_;
+};
+
+template <> class Call<NotExpanded> : public Macroform {
+public:
+  /*
+   * Construct a Call node for NotExpanded phase
+   *
+   * @param callee - IR1Expr that evaluates to the function to call
+   * @param args - Vector of IR1Expr argument expressions
+   */
+  Call(IR1Expr callee, std::vector<IR1Expr> args);
+
+  ExprPtr<Expanded> expand() override;
+
+private:
+  IR1Expr callee_;
+  std::vector<IR1Expr> args_;
 };
 
 /*
@@ -338,36 +336,50 @@ private:
  * environment (closures). Generates LLVM functions with environment
  * parameters and handles free variable capture.
  */
-class Def : public Object {
+template <> class Def<Expanded> : public EmptyBase {
 public:
   /*
-   * Construct a Function node
+   * Construct a Def node for Expanded phase
    *
-   * @param name - Name of the function
-   * @param args - Parameter names
-   * @param body - Body expression of the function
+   * @param var - Name of the variable
+   * @param init - Initialization expression
    */
-  Def(Symbol var, ObjPtr init) : var_(std::move(var)), init_(std::move(init)) {}
+  Def(Symbol var, ExprPtr<Expanded> init);
 
   /*
-   * Function::codegen - Generate LLVM IR for function definitions
+   * Def::codegen - Generate LLVM IR for variable definitions
    *
-   * Creates a function that can capture its lexical environment (closure):
-   * 1. Creates an LLVM function with environment pointer as first argument
-   * 2. Sets up entry block and argument allocations
-   * 3. Generates code for function body within a new lexical scope
-   * 4. Records captured variables for closure creation
-   * 5. Registers the closure constructor
+   * Creates a global variable definition:
+   * 1. Generates code for initialization expression
+   * 2. Creates global variable allocation
+   * 3. Registers the variable in global scope
    *
    * @param codegenContext - Provides LLVM context, builder, module, and lexical
    * environment
-   * @return TaggedLLVMVal - Function as LLVM IR
+   * @return llvm::GlobalVariable* - Variable definition as LLVM IR
    */
-  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+  llvm::GlobalVariable *load(CodegenContext &CodegenContext);
 
 private:
-  Symbol var_;  // Symbol node for LHS
-  ObjPtr init_; // Initialization expression
+  Symbol var_;
+  ExprPtr<Expanded> init_;
+};
+
+template <> class Def<NotExpanded> : public Macroform {
+public:
+  /*
+   * Construct a Def node for NotExpanded phase
+   *
+   * @param var - Name of the variable
+   * @param init - IR1Expr for initialization
+   */
+  Def(Symbol var, IR1Expr init);
+
+  ExprPtr<Expanded> expand() override;
+
+private:
+  Symbol var_;
+  IR1Expr init_;
 };
 
 /*
@@ -377,17 +389,15 @@ private:
  * to variables in different scopes and generates appropriate store
  * instructions.
  */
-class Setq : public Object {
+template <> class Setq<Expanded> : public EmptyBase {
 public:
   /*
-   * Construct a Setq node
+   * Construct a Setq node for Expanded phase
    *
-   * @param name - Name of the variable being assigned
-   * @param fst - Symbol node for the left-hand side
-   * @param snd - Expression for the right-hand side value
+   * @param var - Name of the variable being assigned
+   * @param newval - Expression for the new value
    */
-  Setq(Symbol var, ObjPtr newval)
-      : var_(std::move(var)), newval_(std::move(newval)) {}
+  Setq(Symbol var, ExprPtr<Expanded> newval);
 
   /*
    * Setq::codegen - Generate LLVM IR for variable assignment
@@ -399,45 +409,50 @@ public:
    *
    * @param codegenContext - Provides LLVM context, builder, module, and lexical
    * environment
-   * @return TaggedLLVMVal - Assigned value (right-hand side) as LLVM IR
+   * @return llvm::Value* - Assigned value (right-hand side) as LLVM IR
    * @throws std::runtime_error - If variable not found
    */
-  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext);
 
 private:
-  Symbol var_;    // Symbol node for LHS
-  ObjPtr newval_; // Value expression for RHS
+  Symbol var_;
+  ExprPtr<Expanded> newval_;
 };
 
-class Lambda : public Object {
+template <> class Setq<NotExpanded> : public Macroform {
 public:
-  Lambda(std::vector<Symbol> &&args, ObjPtr body)
-      : args_(std::move(args)), body_(std::move(body)) {}
+  /*
+   * Construct a Setq node for NotExpanded phase
+   *
+   * @param var - Name of the variable being assigned
+   * @param newval - IR1Expr for the new value
+   */
+  Setq(Symbol var, IR1Expr newval);
 
-  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+  ExprPtr<Expanded> expand() override;
 
 private:
-  std::vector<Symbol> args_; // Parameter names
-  ObjPtr body_;              // Function body expression
+  Symbol var_;
+  IR1Expr newval_;
 };
+
 /*
  * If - AST node for conditional expressions
  *
  * Implements if-then-else conditional logic. Generates control flow
  * with basic blocks and PHI nodes to select the appropriate result.
  */
-class If : public Object {
+template <> class If<Expanded> : public EmptyBase {
 public:
   /*
-   * Construct an If node
+   * Construct an If node for Expanded phase
    *
-   * @param Cond - Condition expression
-   * @param Then - Expression to evaluate if condition is true
-   * @param Else - Expression to evaluate if condition is false
+   * @param cond - Condition expression
+   * @param thenBranch - Then branch expression
+   * @param elseBranch - Else branch expression
    */
-  If(ObjPtr cond, ObjPtr thenBranch, ObjPtr elseBranch)
-      : cond_(std::move(cond)), then_(std::move(thenBranch)),
-        else_(std::move(elseBranch)) {}
+  If(ExprPtr<Expanded> cond, ExprPtr<Expanded> thenBranch,
+     ExprPtr<Expanded> elseBranch);
 
   /*
    * If::codegen - Generate LLVM IR for conditional expressions
@@ -449,14 +464,33 @@ public:
    * 4. Uses PHI node to select the correct result value
    *
    * @param codegenContext - Provides LLVM context, builder, module
-   * @return TaggedLLVMVal - Result of selected branch as LLVM IR
+   * @return llvm::PHINode* - Result of selected branch as LLVM IR
    */
-  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+  llvm::PHINode *codegen(CodegenContext &CodegenContext);
 
 private:
-  ObjPtr cond_; // Condition expression
-  ObjPtr then_; // Then-branch expression
-  ObjPtr else_; // Else-branch expression
+  ExprPtr<Expanded> cond_;
+  ExprPtr<Expanded> then_;
+  ExprPtr<Expanded> else_;
+};
+
+template <> class If<NotExpanded> : public Macroform {
+public:
+  /*
+   * Construct an If node for NotExpanded phase
+   *
+   * @param cond - Condition IR1Expr
+   * @param thenBranch - Then branch IR1Expr
+   * @param elseBranch - Else branch IR1Expr
+   */
+  If(IR1Expr cond, IR1Expr thenBranch, IR1Expr elseBranch);
+
+  ExprPtr<Expanded> expand() override;
+
+private:
+  IR1Expr cond_;
+  IR1Expr then_;
+  IR1Expr else_;
 };
 
 /*
@@ -466,15 +500,15 @@ private:
  * statements and non-local jumps within the body. Creates basic
  * blocks for each tag and preserves expression values.
  */
-class Goto : public Object {
+
+template <> class Goto<Expanded> : public EmptyBase {
 public:
   /*
-   * Construct a Goto (tagbody) node
+   * Construct a Goto node for Expanded phase
    *
    * @param body - Vector of expressions and string tags that make up the body
    */
-  Goto(std::vector<std::variant<ObjPtr, std::string>> &&body)
-      : body_(std::move(body)) {}
+  Goto(std::vector<std::variant<ExprPtr<Expanded>, std::string>> &&body);
 
   /*
    * Goto::codegen - Generate LLVM IR for tagbody construct
@@ -487,24 +521,32 @@ public:
    *
    * @param codegenContext - Provides LLVM context, builder, module, and lexical
    * environment
-   * @return TaggedLLVMVal - Value of last evaluated expression in body
+   * @return llvm::Value* - Value of last evaluated expression in body
    */
-  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext);
 
 private:
-  /* Body containing both expressions and string tags for jumps */
-  std::vector<std::variant<ObjPtr, std::string>> body_;
+  std::vector<std::variant<ExprPtr<Expanded>, std::string>> body_;
 };
 
-/*
- * Go - AST node for go expression (jump to tag)
- *
- * Implements jumps to named tags within enclosing tagbody constructs.
- * Generates unconditional branch instructions to the target basic block.
- */
-class Go : public Object {
+template <> class Goto<NotExpanded> : public Macroform {
 public:
-  Go(std::string &&tag) : tag_(tag) {}
+  /*
+   * Construct a Goto node for NotExpanded phase
+   *
+   * @param body - Vector of IR1Expr and string tags that make up the body
+   */
+  Goto(std::vector<std::variant<IR1Expr, std::string>> &&body);
+
+  ExprPtr<Expanded> expand() override;
+
+private:
+  std::vector<std::variant<IR1Expr, std::string>> body_;
+};
+
+template <> class Go<Expanded> : public EmptyBase {
+public:
+  Go(std::string &&tag);
 
   /*
    * Go::codegen - Generate LLVM IR for go expression (jump to tag)
@@ -515,13 +557,28 @@ public:
    *
    * @param codegenContext - Provides LLVM context, builder, module, and lexical
    * environment
-   * @return TaggedLLVMVal - Empty value (control flow never returns)
+   * @return void - Control flow never returns
    * @throws std::runtime_error - If target tag not found
    */
-  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+  void codegen(CodegenContext &CodegenContext);
 
 private:
-  std::string tag_; // Name of the tag to jump to
+  std::string tag_;
+};
+/*
+ * Go - AST node for go expression (jump to tag)
+ *
+ * Implements jumps to named tags within enclosing tagbody constructs.
+ * Generates unconditional branch instructions to the target basic block.
+ */
+template <> class Go<NotExpanded> : public Macroform {
+public:
+  Go(std::string &&tag);
+
+  ExprPtr<Expanded> expand() override;
+
+private:
+  std::string tag_;
 };
 
 /*
@@ -531,17 +588,16 @@ private:
  * Creates a new scope with the bound variable available only within
  * the body expression.
  */
-class Let : public Object {
+template <> class Let<Expanded> : public EmptyBase {
 public:
   /*
-   * Construct a Let node
+   * Construct a Let node for Expanded phase
    *
-   * @param name - Name of the variable to bind
+   * @param var - Name of the variable to bind
    * @param init - Expression to initialize the variable
    * @param body - Expression to evaluate with the variable in scope
    */
-  Let(Symbol var, ObjPtr init, ObjPtr body)
-      : var_(std::move(var)), init_(std::move(init)), body_(std::move(body)) {}
+  Let(Symbol var, ExprPtr<Expanded> init, ExprPtr<Expanded> body);
 
   /*
    * Let::codegen - Generate LLVM IR for local variable binding
@@ -555,12 +611,33 @@ public:
    *
    * @param codegenContext - Provides LLVM context, builder, module, and lexical
    * environment
-   * @return TaggedLLVMVal - Result of body expression as LLVM IR
+   * @return llvm::Value* - Result of body expression as LLVM IR
    */
-  TaggedLLVMVal codegen(CodegenContext &CodegenContext) override;
+  TaggedLLVMVal codegen(CodegenContext &CodegenContext);
 
 private:
-  Symbol var_;  // Symbol node for LHS
-  ObjPtr init_; // Initialization expression
-  ObjPtr body_; // Body expression with variable in scope
+  Symbol var_;
+  ExprPtr<Expanded> init_;
+  ExprPtr<Expanded> body_;
 };
+
+template <> class Let<NotExpanded> : public Macroform {
+public:
+  /*
+   * Construct a Let node for NotExpanded phase
+   *
+   * @param var - Name of the variable to bind
+   * @param init - IR1Expr to initialize the variable
+   * @param body - IR1Expr to evaluate with the variable in scope
+   */
+  Let(Symbol var, IR1Expr init, IR1Expr body);
+
+  ExprPtr<Expanded> expand() override;
+
+private:
+  Symbol var_;
+  IR1Expr init_;
+  IR1Expr body_;
+};
+
+TaggedLLVMVal codegen(CodegenContext &CodegenContext, ExprPtr<Expanded> &expr);

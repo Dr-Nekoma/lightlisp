@@ -74,30 +74,25 @@ struct TaggedLLVMVal {
    */
   TaggedLLVMVal(llvm::Function *fn);
 
-  /*
-   * Get the underlying LLVM value (either regular value or function)
-   *
-   * @return Value* - Pointer to LLVM value
-   */
-  [[nodiscard]] llvm::Value *get() const;
+  TaggedLLVMVal(llvm::CallInst *);
 
-  /*
-   * Get the function pointer if this contains a function
-   *
-   * @return Function* - Pointer to LLVM function
-   * @throws std::bad_variant_access - If this doesn't contain a function
-   */
-  [[nodiscard]] llvm::Function *getFn() const;
+  TaggedLLVMVal(llvm::PHINode *);
 
-  /*
-   * Check if this contains a function pointer
-   *
-   * @return bool - True if contains a function, false otherwise
-   */
-  [[nodiscard]] bool isFn() const;
+  template <typename T> [[nodiscard]] T get() const {
+    if constexpr (std::is_same_v<T, llvm::Value *>)
+      return std::visit([](auto &&arg) -> llvm::Value * { return arg; }, val_);
+
+    return std::get<T>(val_);
+  }
+
+  template <typename T> [[nodiscard]] bool is() const {
+    return std::holds_alternative<T>(val_);
+  }
 
 private:
-  std::variant<llvm::Value *, llvm::Function *> val_;
+  std::variant<llvm::Value *, llvm::Function *, llvm::CallInst *,
+               llvm::PHINode *>
+      val_;
 };
 
 /*

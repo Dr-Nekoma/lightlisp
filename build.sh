@@ -11,7 +11,7 @@ fi
 cd "$BUILD_DIR"
 
 echo "⚙️  Running CMake…"
-cmake -G Ninja ..
+cmake -G Ninja .. -DCMAKE_BUILD_TYPE=Debug
 
 echo "🏗️  Building with Ninja…"
 ninja -j"$(nproc)"
