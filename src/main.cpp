@@ -1,3 +1,4 @@
+#include "compiler.h"
 #include "parser.h"
 #include "prepare.h"
 

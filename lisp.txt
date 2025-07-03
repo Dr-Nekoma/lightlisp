@@ -1,7 +1,7 @@
-(def foo (lambda (x)
-           (if (> x 5)
-               1
-               2)))
+(def sum (lambda (ls)
+           (if ls 
+               (+ (car ls) (sum (cdr ls)))
+               0)))       
 
 (def lisp_main (lambda ()
-                 (foo 0)))
+                 (sum (cons 1 (cons 2 (cons 3 nil))))))

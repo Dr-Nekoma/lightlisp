@@ -1,4 +1,5 @@
 #include "meta.h"
+#include "compiler.h"
 #include "prepare.h"
 #include "util.h"
 
@@ -441,7 +442,7 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
 
 llvm::CallInst *createClosurecall(CodegenContext &codegenContext,
                                   llvm::Value *inst,
-                                  std::vector<ExprPtr<Expanded>> &args) {
+                                  std::vector<FinalExpr> &args) {
   // if (CalleeF->arg_size() != args_.size())
   //   throw std::runtime_error("Incorrect # arguments passed");
 

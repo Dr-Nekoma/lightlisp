@@ -27,7 +27,6 @@ using SyntaxObject = std::variant<Number, Symbol, Cell>;
 
 struct NotExpanded {};
 struct Expanded {};
-struct EmptyBase {};
 
 template <typename T>
 concept Phase = std::is_same_v<T, NotExpanded> || std::is_same_v<T, Expanded>;
@@ -41,24 +40,6 @@ template <Phase P> class Setq;
 template <Phase P> class Lambda;
 template <Phase P> class Call;
 
-// Explicit forward spec
-template <> class Def<NotExpanded>;
-template <> class Def<Expanded>;
-template <> class Setq<NotExpanded>;
-template <> class Setq<Expanded>;
-template <> class If<NotExpanded>;
-template <> class If<Expanded>;
-template <> class Goto<NotExpanded>;
-template <> class Goto<Expanded>;
-template <> class Go<NotExpanded>;
-template <> class Go<Expanded>;
-template <> class Let<NotExpanded>;
-template <> class Let<Expanded>;
-template <> class Lambda<NotExpanded>;
-template <> class Lambda<Expanded>;
-template <> class Call<NotExpanded>;
-template <> class Call<Expanded>;
-
 using AtomPtr = std::variant<std::unique_ptr<Symbol>, std::unique_ptr<Number>>;
 
 template <Phase P>
@@ -70,15 +51,16 @@ using SpFPtr =
 
 template <Phase P> using ExprPtr = std::variant<AtomPtr, SpFPtr<P>>;
 
-class Macroform {
-public:
-  virtual ~Macroform() {}
-  virtual ExprPtr<Expanded> expand() = 0;
-};
-
+class Macroform;
 using MacroPtr = std::unique_ptr<Macroform>;
 using IR1Expr = std::variant<ExprPtr<NotExpanded>, MacroPtr>;
 using FinalExpr = ExprPtr<Expanded>;
+
+class Macroform {
+public:
+  virtual ~Macroform() {}
+  virtual IR1Expr expand() = 0;
+};
 
 /*
  * IntOpFn - Function type for integer operations
@@ -890,7 +872,7 @@ public:
  */
 llvm::CallInst *createClosurecall(CodegenContext &codegenContext,
                                   llvm::Value *inst,
-                                  std::vector<ExprPtr<Expanded>> &args);
+                                  std::vector<FinalExpr> &args);
 
 /*
  * Type namespace - Type constants for cleaner code

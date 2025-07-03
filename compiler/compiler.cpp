@@ -3,23 +3,6 @@
 #include "meta.h"
 #include "util.h"
 
-// Number implementations
-Number::Number(int64_t value) : value_(value) {}
-
-int64_t Number::getValue() const { return value_; }
-
-// Symbol implementations
-Symbol::Symbol(std::string name) : name_(std::move(name)) {}
-
-const std::string &Symbol::getName() const { return name_; }
-
-// Cell implementations
-Cell::Cell() : head_(nullptr), tail_(nullptr) {}
-
-Cell::Cell(std::unique_ptr<SyntaxObject> head,
-           std::unique_ptr<SyntaxObject> tail)
-    : head_(std::move(head)), tail_(std::move(tail)) {}
-
 // Cell::ListIterator implementations
 Cell::ListIterator::ListIterator(SyntaxObject *node) : node_(node) {}
 
@@ -69,143 +52,6 @@ Cell::ListView::ListView(SyntaxObject *head) : head_(head), tail_(nullptr) {}
 Cell::ListIterator Cell::ListView::begin() const { return ListIterator(head_); }
 
 Cell::ListIterator Cell::ListView::end() const { return ListIterator(tail_); }
-
-// Lambda implementations
-Lambda<Expanded>::Lambda(std::vector<Symbol> &&args, ExprPtr<Expanded> body)
-    : args_(std::move(args)), body_(std::move(body)) {}
-
-Lambda<NotExpanded>::Lambda(std::vector<Symbol> &&args, IR1Expr body)
-    : args_(std::move(args)), body_(std::move(body)) {}
-
-ExprPtr<Expanded> Lambda<NotExpanded>::expand() {
-  auto expanded_body_ptr = ir2LispTransform(std::move(body_));
-
-  auto expanded_lambda = Lambda<Expanded>(std::vector<Symbol>(args_),
-                                          std::move(expanded_body_ptr));
-  return std::make_unique<Lambda<Expanded>>(std::move(expanded_lambda));
-}
-
-// Call implementations
-Call<Expanded>::Call(ExprPtr<Expanded> callee,
-                     std::vector<ExprPtr<Expanded>> args)
-    : callee_(std::move(callee)), args_(std::move(args)) {}
-
-Call<NotExpanded>::Call(IR1Expr callee, std::vector<IR1Expr> args)
-    : callee_(std::move(callee)), args_(std::move(args)) {}
-
-ExprPtr<Expanded> Call<NotExpanded>::expand() {
-  ExprPtr<Expanded> expanded_callee = ir2LispTransform(std::move(callee_));
-
-  std::vector<ExprPtr<Expanded>> expanded_args;
-  expanded_args.reserve(args_.size());
-  for (auto &arg : args_)
-    expanded_args.emplace_back(ir2LispTransform(std::move(arg)));
-
-  return std::make_unique<Call<Expanded>>(
-      Call<Expanded>(std::move(expanded_callee), std::move(expanded_args)));
-}
-
-// Def implementations
-Def<Expanded>::Def(Symbol var, ExprPtr<Expanded> init)
-    : var_(std::move(var)), init_(std::move(init)) {}
-
-Def<NotExpanded>::Def(Symbol var, IR1Expr init)
-    : var_(std::move(var)), init_(std::move(init)) {}
-
-ExprPtr<Expanded> Def<NotExpanded>::expand() {
-  ExprPtr<Expanded> expanded_init = ir2LispTransform(std::move(init_));
-  auto expanded_def =
-      std::make_unique<Def<Expanded>>(var_, std::move(expanded_init));
-  return expanded_def;
-}
-
-// Setq implementations
-Setq<Expanded>::Setq(Symbol var, ExprPtr<Expanded> newval)
-    : var_(std::move(var)), newval_(std::move(newval)) {}
-
-Setq<NotExpanded>::Setq(Symbol var, IR1Expr newval)
-    : var_(std::move(var)), newval_(std::move(newval)) {}
-
-ExprPtr<Expanded> Setq<NotExpanded>::expand() {
-  ExprPtr<Expanded> expanded_newval = ir2LispTransform(std::move(newval_));
-  auto expanded_setq = std::make_unique<Setq<Expanded>>(
-      std::move(var_), std::move(expanded_newval));
-  return expanded_setq;
-}
-// If implementations
-If<Expanded>::If(ExprPtr<Expanded> cond, ExprPtr<Expanded> thenBranch,
-                 ExprPtr<Expanded> elseBranch)
-    : cond_(std::move(cond)), then_(std::move(thenBranch)),
-      else_(std::move(elseBranch)) {}
-
-If<NotExpanded>::If(IR1Expr cond, IR1Expr thenBranch, IR1Expr elseBranch)
-    : cond_(std::move(cond)), then_(std::move(thenBranch)),
-      else_(std::move(elseBranch)) {}
-
-ExprPtr<Expanded> If<NotExpanded>::expand() {
-  ExprPtr<Expanded> expanded_cond = ir2LispTransform(std::move(cond_));
-  ExprPtr<Expanded> expanded_then = ir2LispTransform(std::move(then_));
-  ExprPtr<Expanded> expanded_else = ir2LispTransform(std::move(else_));
-
-  auto expanded_if = std::make_unique<If<Expanded>>(std::move(expanded_cond),
-                                                    std::move(expanded_then),
-                                                    std::move(expanded_else));
-  return expanded_if;
-}
-
-// Goto implementations
-Goto<Expanded>::Goto(
-    std::vector<std::variant<ExprPtr<Expanded>, std::string>> &&body)
-    : body_(std::move(body)) {}
-
-Goto<NotExpanded>::Goto(std::vector<std::variant<IR1Expr, std::string>> &&body)
-    : body_(std::move(body)) {}
-
-ExprPtr<Expanded> Goto<NotExpanded>::expand() {
-  std::vector<std::variant<ExprPtr<Expanded>, std::string>> expanded_body;
-  expanded_body.reserve(body_.size());
-
-  for (auto &item : body_) {
-    if (std::holds_alternative<std::string>(item)) {
-      expanded_body.push_back(std::get<std::string>(item));
-    } else {
-      expanded_body.emplace_back(
-          ir2LispTransform(std::move(std::get<IR1Expr>(item))));
-    }
-  }
-
-  auto expanded_goto =
-      std::make_unique<Goto<Expanded>>(std::move(expanded_body));
-  return expanded_goto;
-}
-
-// Go implementations
-Go<Expanded>::Go(std::string &&tag) : tag_(std::move(tag)) {}
-
-Go<NotExpanded>::Go(std::string &&tag) : tag_(std::move(tag)) {}
-
-ExprPtr<Expanded> Go<NotExpanded>::expand() {
-  auto expanded_go = std::make_unique<Go<Expanded>>(std::string(tag_));
-  return expanded_go;
-}
-
-// Let implementations
-Let<Expanded>::Let(Symbol var, ExprPtr<Expanded> init, ExprPtr<Expanded> body)
-    : var_(std::move(var)), init_(std::move(init)), body_(std::move(body)) {}
-
-Let<NotExpanded>::Let(Symbol var, IR1Expr init, IR1Expr body)
-    : var_(std::move(var)), init_(std::move(init)), body_(std::move(body)) {}
-
-ExprPtr<Expanded> Let<NotExpanded>::expand() {
-  ExprPtr<Expanded> expanded_init = ir2LispTransform(std::move(init_));
-  ExprPtr<Expanded> expanded_body = ir2LispTransform(std::move(body_));
-
-  auto expanded_let = std::make_unique<Let<Expanded>>(
-      var_, std::move(expanded_init), std::move(expanded_body));
-  return expanded_let;
-}
-
-// Codegen impl
 
 llvm::Value *Number::codegen(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
@@ -261,19 +107,23 @@ TaggedLLVMVal Symbol::load(CodegenContext &codegenContext) {
   }
 }
 
-llvm::CallInst *Call<Expanded>::emit(CodegenContext &codegenContext) {
+template <Phase P>
+llvm::CallInst *Call<P>::emit(CodegenContext &codegenContext)
+  requires(std::is_same_v<P, Expanded>)
+{
   auto &[context, builder, module] = codegenContext.context;
   // Look up the name in the global module table.
   auto calleeF = codegen(codegenContext, callee_);
-  if (calleeF.is<llvm::Function *>()) {
-    auto fn = calleeF.get<llvm::Function *>();
+  if (calleeF.template is<llvm::Function *>()) {
+    auto fn = calleeF.template get<llvm::Function *>();
     // If argument mismatch error.
     if (fn->arg_size() != args_.size())
       throw std::runtime_error("Incorrect # arguments passed");
 
     std::vector<llvm::Value *> argsV;
     for (auto &arg : args_) {
-      argsV.push_back(codegen(codegenContext, arg).get<llvm::Value *>());
+      argsV.push_back(
+          codegen(codegenContext, arg).template get<llvm::Value *>());
       if (!argsV.back())
         return {};
     }
@@ -282,13 +132,16 @@ llvm::CallInst *Call<Expanded>::emit(CodegenContext &codegenContext) {
 
     return call;
   }
-  auto userVar = calleeF.get<llvm::Value *>();
+  auto userVar = calleeF.template get<llvm::Value *>();
   auto closure = codegenContext.type_manager.checkAndUnpack(userVar, Type::Fn);
 
   return createClosurecall(codegenContext, closure, args_);
 }
 
-llvm::GlobalVariable *Def<Expanded>::load(CodegenContext &codegenContext) {
+template <Phase P>
+llvm::GlobalVariable *Def<P>::load(CodegenContext &codegenContext)
+  requires(std::is_same_v<P, Expanded>)
+{
   auto &[context, builder, module] = codegenContext.context;
   auto &name = var_.getName();
 
@@ -299,7 +152,7 @@ llvm::GlobalVariable *Def<Expanded>::load(CodegenContext &codegenContext) {
 
   codegenContext.lexenv.addVar(name, global);
 
-  auto initVal = codegen(codegenContext, init_).get<llvm::Value *>();
+  auto initVal = codegen(codegenContext, init_).template get<llvm::Value *>();
 
   if (!initVal)
     return {};
@@ -309,7 +162,10 @@ llvm::GlobalVariable *Def<Expanded>::load(CodegenContext &codegenContext) {
   return global;
 }
 
-TaggedLLVMVal Setq<Expanded>::codegen(CodegenContext &codegenContext) {
+template <Phase P>
+TaggedLLVMVal Setq<P>::codegen(CodegenContext &codegenContext)
+  requires(std::is_same_v<P, Expanded>)
+{
   auto &[context, builder, module] = codegenContext.context;
 
   auto name = var_.getName();
@@ -317,7 +173,7 @@ TaggedLLVMVal Setq<Expanded>::codegen(CodegenContext &codegenContext) {
   if (status == CodegenContext::SymbolTable::VarStatus::NotFound)
     throw std::runtime_error("Unknown variable name");
 
-  auto val = ::codegen(codegenContext, newval_).get<llvm::Value *>();
+  auto val = ::codegen(codegenContext, newval_).template get<llvm::Value *>();
   if (!val)
     return {};
 
@@ -354,11 +210,15 @@ TaggedLLVMVal Setq<Expanded>::codegen(CodegenContext &codegenContext) {
   return val;
 }
 
-llvm::PHINode *If<Expanded>::codegen(CodegenContext &codegenContext) {
+template <Phase P>
+llvm::PHINode *If<P>::codegen(CodegenContext &codegenContext)
+  requires(std::is_same_v<P, Expanded>)
+{
   auto &[context, builder, module] = codegenContext.context;
 
   // Generate the boxed Value* for the condition
-  auto condBoxed = ::codegen(codegenContext, cond_).get<llvm::Value *>();
+  auto condBoxed =
+      ::codegen(codegenContext, cond_).template get<llvm::Value *>();
   if (!condBoxed)
     return {};
 
@@ -374,7 +234,7 @@ llvm::PHINode *If<Expanded>::codegen(CodegenContext &codegenContext) {
 
   codegenContext.lexenv.setInsertBlock(ThenBB, false);
 
-  auto thenV = ::codegen(codegenContext, then_).get<llvm::Value *>();
+  auto thenV = ::codegen(codegenContext, then_).template get<llvm::Value *>();
   if (!thenV)
     return {};
 
@@ -386,7 +246,7 @@ llvm::PHINode *If<Expanded>::codegen(CodegenContext &codegenContext) {
   currentFn->insert(currentFn->end(), ElseBB);
   codegenContext.lexenv.setInsertBlock(ElseBB, false);
 
-  auto elseV = ::codegen(codegenContext, else_).get<llvm::Value *>();
+  auto elseV = ::codegen(codegenContext, else_).template get<llvm::Value *>();
   if (!elseV)
     return {};
 
@@ -404,7 +264,10 @@ llvm::PHINode *If<Expanded>::codegen(CodegenContext &codegenContext) {
   return PN;
 }
 
-TaggedLLVMVal Goto<Expanded>::codegen(CodegenContext &codegenContext) {
+template <Phase P>
+TaggedLLVMVal Goto<P>::codegen(CodegenContext &codegenContext)
+  requires(std::is_same_v<P, Expanded>)
+{
   llvm::Function *currentFn =
       codegenContext.context.builder.GetInsertBlock()->getParent();
   auto &[context, builder, module] = codegenContext.context;
@@ -416,8 +279,8 @@ TaggedLLVMVal Goto<Expanded>::codegen(CodegenContext &codegenContext) {
   if (!nonTrivialTags) {
     llvm::Value *ret;
     for (auto &item : body_) {
-      auto &expr = std::get<ExprPtr<Expanded>>(item);
-      ret = ::codegen(codegenContext, expr).get<llvm::Value *>();
+      auto &expr = std::get<FinalExpr>(item);
+      ret = ::codegen(codegenContext, expr).template get<llvm::Value *>();
     }
     return ret;
   }
@@ -450,8 +313,8 @@ TaggedLLVMVal Goto<Expanded>::codegen(CodegenContext &codegenContext) {
       codegenContext.lexenv.setInsertBlock(
           codegenContext.lexenv.lastTagEnv()[*tag], false);
     } else {
-      auto &expr = std::get<ExprPtr<Expanded>>(item);
-      auto v = ::codegen(codegenContext, expr).get<llvm::Value *>();
+      auto &expr = std::get<FinalExpr>(item);
+      auto v = ::codegen(codegenContext, expr).template get<llvm::Value *>();
       if (v)
         builder.CreateStore(v, lastVal);
       curBB = builder.GetInsertBlock();
@@ -468,7 +331,10 @@ TaggedLLVMVal Goto<Expanded>::codegen(CodegenContext &codegenContext) {
   return last;
 }
 
-void Go<Expanded>::codegen(CodegenContext &codegenContext) {
+template <Phase P>
+void Go<P>::codegen(CodegenContext &codegenContext)
+  requires(std::is_same_v<P, Expanded>)
+{
   llvm::BasicBlock *dest = nullptr;
   for (auto env = codegenContext.lexenv.tagEnvs().rbegin();
        env != codegenContext.lexenv.tagEnvs().rend(); ++env) {
@@ -485,17 +351,20 @@ void Go<Expanded>::codegen(CodegenContext &codegenContext) {
   codegenContext.context.builder.CreateBr(dest);
 }
 
-TaggedLLVMVal Let<Expanded>::codegen(CodegenContext &codegenContext) {
+template <Phase P>
+TaggedLLVMVal Let<P>::codegen(CodegenContext &codegenContext)
+  requires(std::is_same_v<P, Expanded>)
+{
   llvm::Function *currentFn =
       codegenContext.lexenv.getCurrentBlock()->getParent();
   // Emit the initializer before adding the variable to scope, this prevents
   // the initializer from referencing the variable itself.
-  auto initVal = ::codegen(codegenContext, init_).get<llvm::Value *>();
+  auto initVal = ::codegen(codegenContext, init_).template get<llvm::Value *>();
 
   codegenContext.lexenv.createLocalVar(currentFn, initVal, var_.getName(),
                                        true);
 
-  auto bodyVal = ::codegen(codegenContext, body_).get<llvm::Value *>();
+  auto bodyVal = ::codegen(codegenContext, body_).template get<llvm::Value *>();
   if (!bodyVal)
     return {};
 
@@ -505,7 +374,10 @@ TaggedLLVMVal Let<Expanded>::codegen(CodegenContext &codegenContext) {
   return bodyVal;
 }
 
-llvm::Value *Lambda<Expanded>::codegen(CodegenContext &codegenContext) {
+template <Phase P>
+llvm::Value *Lambda<P>::codegen(CodegenContext &codegenContext)
+  requires(std::is_same_v<P, Expanded>)
+{
   auto &[context, builder, module] = codegenContext.context;
   auto size = args_.size();
   llvm::FunctionType *FT = codegenContext.type_manager.getStdFnType(size);
@@ -533,7 +405,7 @@ llvm::Value *Lambda<Expanded>::codegen(CodegenContext &codegenContext) {
   for (; it != F->arg_end(); it++)
     codegenContext.lexenv.createLocalVar(F, &*it, it->getName().str());
 
-  auto retVal = ::codegen(codegenContext, body_).get<llvm::Value *>();
+  auto retVal = ::codegen(codegenContext, body_).template get<llvm::Value *>();
   if (!retVal) {
     codegenContext.lexenv.exitScope(true);
     // Error reading body, remove function.
@@ -563,7 +435,7 @@ llvm::Value *Lambda<Expanded>::codegen(CodegenContext &codegenContext) {
   return boxed;
 }
 
-TaggedLLVMVal codegen(CodegenContext &context, ExprPtr<Expanded> &expr) {
+TaggedLLVMVal codegen(CodegenContext &context, FinalExpr &expr) {
   return std::visit(
       [&context](auto &&expr_variant) -> TaggedLLVMVal {
         using T = std::decay_t<decltype(expr_variant)>;

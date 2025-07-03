@@ -1,4 +1,5 @@
 #include "prepare.h"
+#include "compiler.h"
 
 llvm::Value *prepareCMain(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
