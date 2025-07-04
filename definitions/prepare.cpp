@@ -16,10 +16,10 @@ llvm::Function *emitPanic(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
   auto voidType = llvm::Type::getVoidTy(context);
 
-  llvm::FunctionType *FT = llvm::FunctionType::get(
+  auto fType = llvm::FunctionType::get(
       voidType, {builder.getInt32Ty(), builder.getInt32Ty()}, /*vararg=*/false);
   llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, "panic", module);
+      fType, llvm::Function::InternalLinkage, "panic", module);
 
   // entry block + store args into allocas
   llvm::BasicBlock *BB = llvm::BasicBlock::Create(context, "entry", F);
@@ -47,10 +47,10 @@ llvm::Function *emitCons(CodegenContext &codegenContext) {
   auto consType = codegenContext.type_manager.consType;
   auto &[context, builder, module] = codegenContext.context;
 
-  llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, {ptrType, ptrType},
-                                                   /*vararg=*/false);
+  auto fType = llvm::FunctionType::get(ptrType, {ptrType, ptrType},
+                                       /*vararg=*/false);
   llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, getBuiltInName("cons"), module);
+      fType, llvm::Function::InternalLinkage, getBuiltInName("cons"), module);
 
   F->addFnAttr(llvm::Attribute::AlwaysInline);
   auto it = F->arg_begin();
@@ -87,10 +87,10 @@ llvm::Function *emitCar(CodegenContext &codegenContext) {
   auto consType = codegenContext.type_manager.consType;
   auto &[context, builder, module] = codegenContext.context;
 
-  llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, {ptrType},
-                                                   /*vararg=*/false);
+  auto fType = llvm::FunctionType::get(ptrType, {ptrType},
+                                       /*vararg=*/false);
   llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, getBuiltInName("car"), module);
+      fType, llvm::Function::InternalLinkage, getBuiltInName("car"), module);
 
   F->addFnAttr(llvm::Attribute::AlwaysInline);
   F->addFnAttr(llvm::Attribute::NoUnwind);
@@ -115,10 +115,10 @@ llvm::Function *emitCdr(CodegenContext &codegenContext) {
   auto consType = codegenContext.type_manager.consType;
   auto &[context, builder, module] = codegenContext.context;
 
-  llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, {ptrType},
-                                                   /*vararg=*/false);
+  auto fType = llvm::FunctionType::get(ptrType, {ptrType},
+                                       /*vararg=*/false);
   llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, getBuiltInName("cdr"), module);
+      fType, llvm::Function::InternalLinkage, getBuiltInName("cdr"), module);
 
   F->addFnAttr(llvm::Attribute::AlwaysInline);
   F->addFnAttr(llvm::Attribute::NoUnwind);
@@ -143,10 +143,10 @@ llvm::Function *emitSetCar(CodegenContext &codegenContext) {
   auto consType = codegenContext.type_manager.consType;
   auto &[context, builder, module] = codegenContext.context;
 
-  llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, {ptrType, ptrType},
-                                                   /*vararg=*/false);
+  auto fType = llvm::FunctionType::get(ptrType, {ptrType, ptrType},
+                                       /*vararg=*/false);
   llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, getBuiltInName("setcar"), module);
+      fType, llvm::Function::InternalLinkage, getBuiltInName("setcar"), module);
 
   auto it = F->arg_begin();
   it->setName("cons");
@@ -171,10 +171,10 @@ llvm::Function *emitSetCdr(CodegenContext &codegenContext) {
   auto consType = codegenContext.type_manager.consType;
   auto &[context, builder, module] = codegenContext.context;
 
-  llvm::FunctionType *FT = llvm::FunctionType::get(ptrType, {ptrType, ptrType},
-                                                   /*vararg=*/false);
+  auto fType = llvm::FunctionType::get(ptrType, {ptrType, ptrType},
+                                       /*vararg=*/false);
   llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, getBuiltInName("setcdr"), module);
+      fType, llvm::Function::InternalLinkage, getBuiltInName("setcdr"), module);
 
   auto it = F->arg_begin();
   it->setName("cons");

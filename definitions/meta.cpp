@@ -35,10 +35,10 @@ CodegenContext::SymbolTable::SymbolTable(CodegenContext &codegenContext)
   setUpSTDLib();
 
   auto ptrType = codegenContext.type_manager.ptrType;
-  llvm::FunctionType *FT = llvm::FunctionType::get(
+  auto fType = llvm::FunctionType::get(
       llvm::Type::getVoidTy(parent_->context.context), {ptrType},
       /*vararg=*/false);
-  ctorFn_ = llvm::Function::Create(FT, llvm::Function::InternalLinkage,
+  ctorFn_ = llvm::Function::Create(fType, llvm::Function::InternalLinkage,
                                    "init.Closures", parent_->context.module);
 
   ctorBlock_ = llvm::BasicBlock::Create(parent_->context.context, "ctors.entry",
@@ -66,9 +66,9 @@ llvm::AllocaInst *CodegenContext::SymbolTable::createLocalVar(
     bool addScope) {
   auto &builder = parent_->context.builder;
 
-  auto Alloca =
+  auto alloca =
       CreateEntryBlockAlloca(currentFn, parent_->type_manager.ptrType, name);
-  builder.CreateStore(init, Alloca);
+  builder.CreateStore(init, alloca);
 
   // Remember the old variable binding so that we can restore the binding when
   // we unrecurse.
@@ -76,8 +76,8 @@ llvm::AllocaInst *CodegenContext::SymbolTable::createLocalVar(
     enterScope();
 
   // Remember this binding.
-  addVar(name, Alloca);
-  return Alloca;
+  addVar(name, alloca);
+  return alloca;
 }
 
 void CodegenContext::SymbolTable::addVar(const std::string &name,
@@ -239,7 +239,7 @@ CodegenContext::SymbolTable::constructClosureWrapper(llvm::Function *fnPtr) {
 
   uint64_t slotsSize = freeVarsSize * dataL.getTypeAllocSize(ptrType);
 
-  llvm::Value *freeVarsArray =
+  auto freeVarsArray =
       builder.CreateCall(codegenContext.memory_manager.getArenaAllocator(),
                          {builder.getInt64(slotsSize)});
 
@@ -268,13 +268,13 @@ void CodegenContext::SymbolTable::setUpInternalFns() {
   auto &codegenContext = *parent_;
   auto &[context, builder, module] = codegenContext.context;
 
-  llvm::FunctionType *trapFT = llvm::FunctionType::get(
+  auto trapFT = llvm::FunctionType::get(
       builder.getVoidTy(), {builder.getInt32Ty(), builder.getInt32Ty()}, false);
   trapFn_ = llvm::Function::Create(trapFT, llvm::Function::ExternalLinkage,
                                    "panic_code", module);
 
-  llvm::FunctionType *printFT = llvm::FunctionType::get(
-      builder.getVoidTy(), {builder.getInt64Ty()}, false);
+  auto printFT = llvm::FunctionType::get(builder.getVoidTy(),
+                                         {builder.getInt64Ty()}, false);
   printFn_ = llvm::Function::Create(printFT, llvm::Function::ExternalLinkage,
                                     "print_int", module);
 
@@ -292,26 +292,25 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
 
   builtInFns_["+"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("+"),
-      [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+      [](auto &builder, auto a) {
         return builder.CreateAdd(a[0], a[1], "addtmp");
       },
       {Type::Int, Type::Int}, Type::Int);
   builtInFns_["-"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("-"),
-      [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+      [](auto &builder, auto a) {
         return builder.CreateSub(a[0], a[1], "subtmp");
       },
       {Type::Int, Type::Int}, Type::Int);
   builtInFns_["*"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("*"),
-      [](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+      [](auto &builder, auto a) {
         return builder.CreateMul(a[0], a[1], "multmp");
       },
       {Type::Int, Type::Int}, Type::Int);
   builtInFns_["<"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("<"),
-      [&codegenContext](llvm::IRBuilder<> &builder,
-                        llvm::ArrayRef<llvm::Value *> a) {
+      [&codegenContext](auto &builder, auto a) {
         auto boolRes = builder.CreateICmpSLT(a[0], a[1], "cmptmp");
         return builder.CreateSelect(
             boolRes, codegenContext.lexenv.getConstGlobal("t"),
@@ -321,8 +320,7 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
 
   builtInFns_[">"] = emitBuiltIn<2>(
       codegenContext, getBuiltInName(">"),
-      [&codegenContext](llvm::IRBuilder<> &builder,
-                        llvm::ArrayRef<llvm::Value *> a) {
+      [&codegenContext](auto &builder, auto a) {
         auto boolRes = builder.CreateICmpSGT(a[0], a[1], "cmptmp");
         return builder.CreateSelect(
             boolRes, codegenContext.lexenv.getConstGlobal("t"),
@@ -332,8 +330,7 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
 
   builtInFns_["="] = emitBuiltIn<2>(
       codegenContext, getBuiltInName("="),
-      [&codegenContext](llvm::IRBuilder<> &builder,
-                        llvm::ArrayRef<llvm::Value *> a) {
+      [&codegenContext](auto &builder, auto a) {
         auto boolRes = builder.CreateICmpEQ(a[0], a[1], "cmptmp");
         return builder.CreateSelect(
             boolRes, codegenContext.lexenv.getConstGlobal("t"),
@@ -343,8 +340,7 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
 
   builtInFns_["eq"] = emitBuiltIn<2>(
       codegenContext, "eq",
-      [&codegenContext](llvm::IRBuilder<> &builder,
-                        llvm::ArrayRef<llvm::Value *> a) {
+      [&codegenContext](auto &builder, auto a) {
         auto boolRes = builder.CreateICmpEQ(a[0], a[1], "cmptmp");
         return builder.CreateSelect(
             boolRes, codegenContext.lexenv.getConstGlobal("t"),
@@ -355,14 +351,14 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
   builtInFns_["cons"] = emitBuiltIn<2>( // FIXME should I even cache normal
                                         // (even if predefined) functions?
       codegenContext, "cons",
-      [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+      [this](auto &builder, auto a) {
         return builder.CreateCall(getBuiltInFn(getBuiltInName("cons")),
                                   {a[0], a[1]}, "cons.ret");
       },
       {std::nullopt}, Type::Cons);
   builtInFns_["car"] = emitBuiltIn<1>(
       codegenContext, "car",
-      [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+      [this](auto &builder, auto a) {
         auto call = builder.CreateCall(getBuiltInFn(getBuiltInName("car")),
                                        {a[0]}, "car.ret");
         // call->setOnlyReadsMemory();
@@ -372,7 +368,7 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
       {Type::Cons}, std::nullopt);
   builtInFns_["cdr"] = emitBuiltIn<1>(
       codegenContext, "cdr",
-      [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+      [this](auto &builder, auto a) {
         auto call = builder.CreateCall(getBuiltInFn(getBuiltInName("cdr")),
                                        {a[0]}, "cdr.ret");
         // call->setOnlyReadsMemory();
@@ -383,7 +379,7 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
 
   builtInFns_["setcar"] = emitBuiltIn<2>(
       codegenContext, "setcar",
-      [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+      [this](auto &builder, auto a) {
         auto call = builder.CreateCall(getBuiltInFn(getBuiltInName("setcar")),
                                        {a[0], a[1]}, "setcar.ret");
         // call->setOnlyReadsMemory();
@@ -394,7 +390,7 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
 
   builtInFns_["setcdr"] = emitBuiltIn<2>(
       codegenContext, "setcdr",
-      [this](llvm::IRBuilder<> &builder, llvm::ArrayRef<llvm::Value *> a) {
+      [this](auto &builder, auto a) {
         auto call = builder.CreateCall(getBuiltInFn(getBuiltInName("setcdr")),
                                        {a[0], a[1]}, "setcdr.ret");
         // call->setOnlyReadsMemory();
@@ -405,8 +401,7 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
 
   builtInFns_["isInt"] = emitBuiltIn<1>(
       codegenContext, "isInt",
-      [&codegenContext](llvm::IRBuilder<> &builder,
-                        llvm::ArrayRef<llvm::Value *> a) {
+      [&codegenContext](auto &builder, auto a) {
         auto typecond =
             codegenContext.type_manager.emitTypeCheck(a[0], Type::Int);
         return builder.CreateSelect(
@@ -417,8 +412,7 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
 
   builtInFns_["isCons"] = emitBuiltIn<1>(
       codegenContext, "isCons",
-      [&codegenContext](llvm::IRBuilder<> &builder,
-                        llvm::ArrayRef<llvm::Value *> a) {
+      [&codegenContext](auto &builder, auto a) {
         auto typecond =
             codegenContext.type_manager.emitTypeCheck(a[0], Type::Cons);
         return builder.CreateSelect(
@@ -429,8 +423,7 @@ void CodegenContext::SymbolTable::setUpSTDLib() {
 
   builtInFns_["isFn"] = emitBuiltIn<1>(
       codegenContext, "isFn",
-      [&codegenContext](llvm::IRBuilder<> &builder,
-                        llvm::ArrayRef<llvm::Value *> a) {
+      [&codegenContext](auto &builder, auto a) {
         auto typecond =
             codegenContext.type_manager.emitTypeCheck(a[0], Type::Fn);
         return builder.CreateSelect(
@@ -462,10 +455,9 @@ llvm::CallInst *createClosurecall(CodegenContext &codegenContext,
   // let's skip the arg check for now
   std::vector<llvm::Value *> envArgs{envGEP};
   envArgs.insert(envArgs.end(), argsV.begin(), argsV.end());
-  llvm::FunctionType *FT =
-      codegenContext.type_manager.getStdFnType(argsV.size());
+  auto fType = codegenContext.type_manager.getStdFnType(argsV.size());
 
-  auto call = builder.CreateCall(FT, fnPtr, envArgs, "closure.res");
+  auto call = builder.CreateCall(fType, fnPtr, envArgs, "closure.res");
 
   return call;
 }
@@ -473,7 +465,7 @@ llvm::CallInst *createClosurecall(CodegenContext &codegenContext,
 void CodegenContext::addCtor(size_t priority, llvm::Function *ctor) {
   auto ptrType = type_manager.ptrType;
   auto elemType = llvm::StructType::get(type_manager.i32Type, ptrType, ptrType);
-  llvm::Constant *ctorElem = llvm::ConstantStruct::get(
+  auto ctorElem = llvm::ConstantStruct::get(
       elemType, {context.builder.getInt32(priority), ctor,
                  llvm::Constant::getNullValue(ptrType)});
   initCtors_.push_back(ctorElem);

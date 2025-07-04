@@ -119,9 +119,9 @@ int main(int argc, char **argv) { // Needs cleanup
     auto &M = codegenContext.context.module;
 
     // 1) Make the Function and its prototype
-    auto FT = llvm::FunctionType::get(builder.getInt32Ty(), {}, false);
-    auto wrapper =
-        llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "main", &M);
+    auto fType = llvm::FunctionType::get(builder.getInt32Ty(), {}, false);
+    auto wrapper = llvm::Function::Create(
+        fType, llvm::Function::ExternalLinkage, "main", &M);
 
     // 2) Create three blocks: entry, body, exit
     auto bodyBB = llvm::BasicBlock::Create(C, "body", wrapper);

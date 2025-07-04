@@ -73,9 +73,9 @@ llvm::Module M("my_module", *ctx);
 - **Creation**:
 
   ```c++
-  auto FT = llvm::FunctionType::get(retTy, argTypes, /*vararg=*/false);
+  autofType = llvm::FunctionType::get(retTy, argTypes, /*vararg=*/false);
   auto F  = llvm::Function::Create(
-      FT, llvm::Function::ExternalLinkage, "foo", &module);
+     fType, llvm::Function::ExternalLinkage, "foo", &module);
   ```
 
 - **Arguments**: `for (auto &arg : F->args()) arg.setName("x");`

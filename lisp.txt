@@ -1,7 +1,7 @@
 (def sum (lambda (ls)
            (if ls 
                (+ (car ls) (sum (cdr ls)))
-               0)))       
+               0)))
 
 (def lisp_main (lambda ()
                  (sum (cons 1 (cons 2 (cons 3 nil))))))

@@ -63,6 +63,12 @@ public:
 };
 
 /*
+(case x
+  (1 ...)
+  (2 ...))
+*/
+
+/*
  * IntOpFn - Function type for integer operations
  *
  * Represents functions that operate on integer values and generate

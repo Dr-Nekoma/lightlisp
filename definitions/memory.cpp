@@ -56,12 +56,12 @@ CodegenContext::Memorymanager::defineArenaAlloc(IRGenContext &irgc) {
   auto i64Ty = llvm::Type::getInt64Ty(C);
   auto i8Ptr = llvm::PointerType::get(C, 0);
 
-  auto FT = llvm::FunctionType::get(
+  auto fType = llvm::FunctionType::get(
       /*RetTy=*/i8Ptr,
       /*Params=*/{i64Ty},
       /*isVarArg=*/false);
-  auto allocator = llvm::Function::Create(FT, llvm::Function::InternalLinkage,
-                                          "arenaAllocValue", irgc.module);
+  auto allocator = llvm::Function::Create(
+      fType, llvm::Function::InternalLinkage, "arenaAllocValue", irgc.module);
 
   auto it = allocator->arg_begin();
   it->setName("size");
@@ -131,11 +131,10 @@ void CodegenContext::Memorymanager::prepareArena(
   auto fd = builder.getInt32(-1);
   auto off = builder.getInt64(0);
 
-  llvm::FunctionType *FT =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(context), {i8Ptr},
-                              /*vararg=*/false);
+  auto fType = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {i8Ptr},
+                                       /*vararg=*/false);
   llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, "prepare.arena", module);
+      fType, llvm::Function::InternalLinkage, "prepare.arena", module);
 
   llvm::BasicBlock *BB = llvm::BasicBlock::Create(context, "entry", F);
 

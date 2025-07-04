@@ -18,9 +18,9 @@ std::unique_ptr<SyntaxObject> Parser::ReadProper() {
 
   auto current_object = tokenizer_.GetToken().value();
 
-  if (SymbolToken *symbol = std::get_if<SymbolToken>(&current_object)) {
+  if (auto symbol = std::get_if<SymbolToken>(&current_object)) {
     return std::make_unique<SyntaxObject>(Symbol(symbol->name));
-  } else if (NumberToken *num_tok = std::get_if<NumberToken>(&current_object)) {
+  } else if (auto num_tok = std::get_if<NumberToken>(&current_object)) {
     return std::make_unique<SyntaxObject>(Number(num_tok->value));
   } else {
     auto syntax = std::get<SyntaxToken>(current_object);

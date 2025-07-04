@@ -55,10 +55,10 @@ Cell::ListIterator Cell::ListView::end() const { return ListIterator(tail_); }
 
 llvm::Value *Number::codegen(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
-  llvm::Value *raw = builder.getInt64(value_);
+  auto raw = builder.getInt64(value_);
 
   auto name = "num" + std::to_string(value_);
-  llvm::Value *boxed = codegenContext.type_manager.packVal(raw, Type::Int);
+  auto boxed = codegenContext.type_manager.packVal(raw, Type::Int);
 
   return boxed;
 }
@@ -222,62 +222,60 @@ llvm::PHINode *If<P>::codegen(CodegenContext &codegenContext)
   if (!condBoxed)
     return {};
 
-  llvm::Value *condI1 = codegenContext.type_manager.emitTrueCheck(condBoxed);
+  auto condI1 = codegenContext.type_manager.emitTrueCheck(condBoxed);
 
-  llvm::Function *currentFn = builder.GetInsertBlock()->getParent();
-  llvm::BasicBlock *ThenBB =
-      llvm::BasicBlock::Create(context, "then", currentFn);
-  llvm::BasicBlock *ElseBB = llvm::BasicBlock::Create(context, "else");
-  llvm::BasicBlock *MergeBB = llvm::BasicBlock::Create(context, "ifcont");
+  auto currentFn = builder.GetInsertBlock()->getParent();
+  auto thenBB = llvm::BasicBlock::Create(context, "then", currentFn);
+  auto elseBB = llvm::BasicBlock::Create(context, "else");
+  auto mergeBB = llvm::BasicBlock::Create(context, "ifcont");
 
-  builder.CreateCondBr(condI1, ThenBB, ElseBB);
+  builder.CreateCondBr(condI1, thenBB, elseBB);
 
-  codegenContext.lexenv.setInsertBlock(ThenBB, false);
+  codegenContext.lexenv.setInsertBlock(thenBB, false);
 
   auto thenV = ::codegen(codegenContext, then_).template get<llvm::Value *>();
   if (!thenV)
     return {};
 
-  builder.CreateBr(MergeBB);
+  builder.CreateBr(mergeBB);
   // Codegen of 'Then' can change the current block, update ThenBB for the PHI.
-  ThenBB = builder.GetInsertBlock();
+  thenBB = builder.GetInsertBlock();
 
   // Emit else block.
-  currentFn->insert(currentFn->end(), ElseBB);
-  codegenContext.lexenv.setInsertBlock(ElseBB, false);
+  currentFn->insert(currentFn->end(), elseBB);
+  codegenContext.lexenv.setInsertBlock(elseBB, false);
 
   auto elseV = ::codegen(codegenContext, else_).template get<llvm::Value *>();
   if (!elseV)
     return {};
 
-  builder.CreateBr(MergeBB);
+  builder.CreateBr(mergeBB);
   // codegen of 'Else' can change the current block, update ElseBB for the PHI.
-  ElseBB = builder.GetInsertBlock();
+  elseBB = builder.GetInsertBlock();
 
-  currentFn->insert(currentFn->end(), MergeBB);
-  codegenContext.lexenv.setInsertBlock(MergeBB, false);
-  llvm::PHINode *PN =
-      builder.CreatePHI(codegenContext.type_manager.ptrType, 2, "iftmp");
+  currentFn->insert(currentFn->end(), mergeBB);
+  codegenContext.lexenv.setInsertBlock(mergeBB, false);
+  auto phi = builder.CreatePHI(codegenContext.type_manager.ptrType, 2, "iftmp");
 
-  PN->addIncoming(thenV, ThenBB);
-  PN->addIncoming(elseV, ElseBB);
-  return PN;
+  phi->addIncoming(thenV, thenBB);
+  phi->addIncoming(elseV, elseBB);
+  return phi;
 }
 
 template <Phase P>
 TaggedLLVMVal Goto<P>::codegen(CodegenContext &codegenContext)
   requires(std::is_same_v<P, Expanded>)
 {
-  llvm::Function *currentFn =
-      codegenContext.context.builder.GetInsertBlock()->getParent();
+  auto currentFn = codegenContext.context.builder.GetInsertBlock()->getParent();
   auto &[context, builder, module] = codegenContext.context;
 
   // Check if this is a simple sequential body with no tags
   auto nonTrivialTags = std::any_of(body_.begin(), body_.end(), [](auto &item) {
     return std::holds_alternative<std::string>(item);
   });
+
   if (!nonTrivialTags) {
-    llvm::Value *ret;
+    llvm::Value *ret = nullptr;
     for (auto &item : body_) {
       auto &expr = std::get<FinalExpr>(item);
       ret = ::codegen(codegenContext, expr).template get<llvm::Value *>();
@@ -299,12 +297,12 @@ TaggedLLVMVal Goto<P>::codegen(CodegenContext &codegenContext)
     }
   }
 
-  llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(
+  auto afterBB = llvm::BasicBlock::Create(
       context,
       "tagbody.exit" + std::to_string(codegenContext.lexenv.tagEnvs().size()),
       currentFn);
 
-  llvm::BasicBlock *curBB = builder.GetInsertBlock();
+  auto curBB = builder.GetInsertBlock();
 
   for (auto &item : body_) {
     if (auto tag = std::get_if<std::string>(&item)) {
@@ -324,8 +322,8 @@ TaggedLLVMVal Goto<P>::codegen(CodegenContext &codegenContext)
   if (!curBB->getTerminator())
     builder.CreateBr(afterBB);
   codegenContext.lexenv.setInsertBlock(afterBB, false);
-  llvm::Value *last = builder.CreateLoad(codegenContext.type_manager.ptrType,
-                                         lastVal, "tagbody.last");
+  auto last = builder.CreateLoad(codegenContext.type_manager.ptrType, lastVal,
+                                 "tagbody.last");
   codegenContext.lexenv.tagEnvs().pop_back();
 
   return last;
@@ -338,8 +336,7 @@ void Go<P>::codegen(CodegenContext &codegenContext)
   llvm::BasicBlock *dest = nullptr;
   for (auto env = codegenContext.lexenv.tagEnvs().rbegin();
        env != codegenContext.lexenv.tagEnvs().rend(); ++env) {
-    auto it = env->find(tag_);
-    if (it != env->end()) {
+    if (auto it = env->find(tag_); it != env->end()) {
       dest = it->second;
       break;
     }
@@ -355,8 +352,7 @@ template <Phase P>
 TaggedLLVMVal Let<P>::codegen(CodegenContext &codegenContext)
   requires(std::is_same_v<P, Expanded>)
 {
-  llvm::Function *currentFn =
-      codegenContext.lexenv.getCurrentBlock()->getParent();
+  auto currentFn = codegenContext.lexenv.getCurrentBlock()->getParent();
   // Emit the initializer before adding the variable to scope, this prevents
   // the initializer from referencing the variable itself.
   auto initVal = ::codegen(codegenContext, init_).template get<llvm::Value *>();
@@ -380,10 +376,10 @@ llvm::Value *Lambda<P>::codegen(CodegenContext &codegenContext)
 {
   auto &[context, builder, module] = codegenContext.context;
   auto size = args_.size();
-  llvm::FunctionType *FT = codegenContext.type_manager.getStdFnType(size);
+  auto fType = codegenContext.type_manager.getStdFnType(size);
 
-  llvm::Function *F = llvm::Function::Create(
-      FT, llvm::Function::InternalLinkage, "__anon__closure", module);
+  auto F = llvm::Function::Create(fType, llvm::Function::InternalLinkage,
+                                  "__anon__closure", module);
 
   // First argument is always the environment pointer for closures
   auto &arg = *F->arg_begin();
@@ -395,9 +391,9 @@ llvm::Value *Lambda<P>::codegen(CodegenContext &codegenContext)
   for (; it1 != F->arg_end(); it1++)
     it1->setName(args_[Idx++].getName());
 
-  auto BB = llvm::BasicBlock::Create(context, "entry", F);
+  auto basicBlock = llvm::BasicBlock::Create(context, "entry", F);
 
-  codegenContext.lexenv.setInsertBlock(BB, true);
+  codegenContext.lexenv.setInsertBlock(basicBlock, true);
 
   codegenContext.lexenv.enterScope(&*F->arg_begin());
   auto it = F->arg_begin();

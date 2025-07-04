@@ -73,10 +73,10 @@ llvm::Function *emitBuiltIn(
   auto ptrType = codegenContext.type_manager.ptrType;
   // Build FunctionType: (ptr,ptr,… Arity times) -> ptr
   llvm::SmallVector<llvm::Type *, Arity> params(Arity, ptrType);
-  auto FT = llvm::FunctionType::get(ptrType, params, /*isVarArg=*/false);
+  auto fType = llvm::FunctionType::get(ptrType, params, /*isVarArg=*/false);
 
-  auto F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, fnName,
-                                  module);
+  auto F = llvm::Function::Create(fType, llvm::Function::ExternalLinkage,
+                                  fnName, module);
   F->addFnAttr(llvm::Attribute::AlwaysInline);
 
   unsigned idx = 0;
