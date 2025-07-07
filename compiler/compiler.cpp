@@ -55,10 +55,9 @@ Cell::ListIterator Cell::ListView::end() const { return ListIterator(tail_); }
 
 llvm::Value *Number::codegen(CodegenContext &codegenContext) {
   auto &[context, builder, module] = codegenContext.context;
-  auto raw = builder.getInt64(value_);
 
-  auto name = "num" + std::to_string(value_);
-  auto boxed = codegenContext.type_manager.packVal(raw, Type::Int);
+  auto boxed =
+      codegenContext.type_manager.packVal(builder.getInt64(value_), Type::Int);
 
   return boxed;
 }
@@ -80,7 +79,7 @@ TaggedLLVMVal Symbol::load(CodegenContext &codegenContext) {
     auto idx =
         codegenContext.lexenv.freeVarsSize() -
         1; // idx after I add the var, so that later when we emit the
-           // environment it would have this exact idxx for this exact variable
+           // environment it would have this exact idx for this exact variable
     auto curEnv = codegenContext.lexenv.getCurrentEnv();
 
     auto ptrType = codegenContext.type_manager.ptrType;
@@ -385,18 +384,17 @@ llvm::Value *Lambda<P>::codegen(CodegenContext &codegenContext)
   auto &arg = *F->arg_begin();
   arg.setName("_____env"); // FIXME -- normal naming for hidden args
 
-  unsigned Idx = 0;
   auto it1 = F->arg_begin(); // FIXME, merge with above
   it1++;
-  for (; it1 != F->arg_end(); it1++)
-    it1->setName(args_[Idx++].getName());
+  for (size_t i = 0; it1 != F->arg_end(); it1++, i++)
+    it1->setName(args_[i].getName());
 
   auto basicBlock = llvm::BasicBlock::Create(context, "entry", F);
 
   codegenContext.lexenv.setInsertBlock(basicBlock, true);
 
-  codegenContext.lexenv.enterScope(&*F->arg_begin());
   auto it = F->arg_begin();
+  codegenContext.lexenv.enterScope(&*it);
   it++;
   for (; it != F->arg_end(); it++)
     codegenContext.lexenv.createLocalVar(F, &*it, it->getName().str());

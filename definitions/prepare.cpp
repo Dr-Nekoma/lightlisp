@@ -53,10 +53,7 @@ llvm::Function *emitCons(CodegenContext &codegenContext) {
       fType, llvm::Function::InternalLinkage, getBuiltInName("cons"), module);
 
   F->addFnAttr(llvm::Attribute::AlwaysInline);
-  auto it = F->arg_begin();
-  it->setName("car");
-  ++it;
-  it->setName("cdr");
+  setArgNames(F, "car", "cdr");
 
   auto BB = llvm::BasicBlock::Create(context, "entry", F);
   builder.SetInsertPoint(BB);
@@ -68,7 +65,7 @@ llvm::Function *emitCons(CodegenContext &codegenContext) {
 
   auto consPtr = builder.CreateBitCast(rawCell, ptrType, "cons.ptr");
 
-  it = F->arg_begin();
+  auto it = F->arg_begin();
   // write car
   auto carGEP = builder.CreateStructGEP(consType, consPtr, 0, "car.gep");
   builder.CreateStore(&*it, carGEP);
@@ -94,13 +91,12 @@ llvm::Function *emitCar(CodegenContext &codegenContext) {
 
   F->addFnAttr(llvm::Attribute::AlwaysInline);
   F->addFnAttr(llvm::Attribute::NoUnwind);
-  auto it = F->arg_begin();
-  it->setName("cons");
+  setArgNames(F, "cons");
 
   auto BB = llvm::BasicBlock::Create(context, "entry", F);
   builder.SetInsertPoint(BB);
 
-  it = F->arg_begin();
+  auto it = F->arg_begin();
 
   llvm::Value *valPayloadGEP =
       builder.CreateStructGEP(consType, &*it, 0, "cons.car");
@@ -122,13 +118,12 @@ llvm::Function *emitCdr(CodegenContext &codegenContext) {
 
   F->addFnAttr(llvm::Attribute::AlwaysInline);
   F->addFnAttr(llvm::Attribute::NoUnwind);
-  auto it = F->arg_begin();
-  it->setName("cons");
+  setArgNames(F, "cons");
 
   auto BB = llvm::BasicBlock::Create(context, "entry", F);
   builder.SetInsertPoint(BB);
 
-  it = F->arg_begin();
+  auto it = F->arg_begin();
 
   llvm::Value *valPayloadGEP =
       builder.CreateStructGEP(consType, &*it, 1, "cons.cdr");
@@ -148,15 +143,12 @@ llvm::Function *emitSetCar(CodegenContext &codegenContext) {
   llvm::Function *F = llvm::Function::Create(
       fType, llvm::Function::InternalLinkage, getBuiltInName("setcar"), module);
 
-  auto it = F->arg_begin();
-  it->setName("cons");
-  it++;
-  it->setName("newval");
+  setArgNames(F, "cons", "newval");
 
   auto BB = llvm::BasicBlock::Create(context, "entry", F);
   builder.SetInsertPoint(BB);
 
-  it = F->arg_begin();
+  auto it = F->arg_begin();
 
   llvm::Value *valPayloadGEP =
       builder.CreateStructGEP(consType, &*it, 0, "cons.car");
@@ -176,15 +168,12 @@ llvm::Function *emitSetCdr(CodegenContext &codegenContext) {
   llvm::Function *F = llvm::Function::Create(
       fType, llvm::Function::InternalLinkage, getBuiltInName("setcdr"), module);
 
-  auto it = F->arg_begin();
-  it->setName("cons");
-  it++;
-  it->setName("newval");
+  setArgNames(F, "cons", "newval");
 
   auto BB = llvm::BasicBlock::Create(context, "entry", F);
   builder.SetInsertPoint(BB);
 
-  it = F->arg_begin();
+  auto it = F->arg_begin();
 
   llvm::Value *valPayloadGEP =
       builder.CreateStructGEP(consType, &*it, 1, "cons.cdr");

@@ -880,6 +880,18 @@ llvm::CallInst *createClosurecall(CodegenContext &codegenContext,
                                   llvm::Value *inst,
                                   std::vector<FinalExpr> &args);
 
+template <typename... Args>
+void setArgNames(llvm::Function *F, Args &&...names) {
+  auto it = F->arg_begin();
+  auto setName = [&](const auto &name) {
+    if (it != F->arg_end()) {
+      it->setName(name);
+      ++it;
+    }
+  };
+  (setName(names), ...);
+}
+
 /*
  * Type namespace - Type constants for cleaner code
  *
