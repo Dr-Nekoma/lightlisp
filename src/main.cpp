@@ -101,7 +101,7 @@ int main(int argc, char **argv) { // Needs cleanup
     return 1;
   }
 
-  Tokenizer tok(&my_lisp);
+  TokenView tok(&my_lisp);
   Parser parser(std::move(tok));
 
   CodegenContext codegenContext;

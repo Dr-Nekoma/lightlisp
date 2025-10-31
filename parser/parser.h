@@ -16,7 +16,7 @@
 
 class Parser {
 public:
-  explicit Parser(Tokenizer &&tok);
+  explicit Parser(TokenView &&tok);
 
   std::unique_ptr<SyntaxObject> ReadList();
 
@@ -24,11 +24,12 @@ public:
 
   std::unique_ptr<SyntaxObject> ReadProper();
 
-  bool IsEnd() { return tokenizer_.IsEnd(); }
+  bool IsEnd() { return it_ == tokenizer_.end(); }
 
 private:
   void ParenClose();
   void ParenOpen();
-  Tokenizer tokenizer_;
+  TokenView tokenizer_;
+  TokenView::ConstIterator it_;
   int64_t paren_count_ = 0;
 };
