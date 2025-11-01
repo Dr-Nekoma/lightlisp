@@ -91,12 +91,18 @@ ObjectBuilder::ObjectBuilder() {
                            SyntaxObject *syntax) -> IR1Expr {
     auto view = Cell::ListView(syntax);
     auto it = view.begin();
-    if (auto cell = it->get_if<Cell>()) {
-      auto argVec = parseArgList(cell->get<0>().get());
+    if (it->is<Cell>()) {
+      auto argVec = parseArgList(&*it);
       it++;
       auto body = codeWalk(builder, *it);
       return ExprPtr<NotExpanded>(std::make_unique<Lambda<NotExpanded>>(
           std::move(argVec), std::move(body)));
+    }
+    if (it->isNil()) {
+      it++;
+      auto body = codeWalk(builder, *it);
+      return ExprPtr<NotExpanded>(std::make_unique<Lambda<NotExpanded>>(
+          std::vector<Symbol>(), std::move(body)));
     }
     throw std::runtime_error("Arg list is not a list");
   };
@@ -122,57 +128,55 @@ std::vector<Symbol> parseArgList(SyntaxObject *syntax) {
 
 std::vector<IR1Expr> lispListToVec(ObjectBuilder &builder,
                                    SyntaxObject *syntax) {
-  std::vector<IR1Expr> res;
   if (!syntax)
-    return res;
-  auto view = Cell::ListView(syntax);
-  for (auto &node : view) {
+    return {};
+  std::vector<IR1Expr> res;
+  for (auto &node : Cell::ListView(syntax)) {
     res.emplace_back(codeWalk(builder, node));
   }
   return res;
 }
 
 IR1Expr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax) {
-  if (auto number = syntax.get_if<Number>()) {
+  if (auto number = syntax.get_if<Number>())
     return std::make_unique<Number>(std::move(*number));
-  } else if (auto symbol = syntax.get_if<Symbol>()) {
+  if (auto symbol = syntax.get_if<Symbol>())
     return std::make_unique<Symbol>(std::move(*symbol));
-  } else {
-    Cell &cell = syntax.get<Cell>();
-    auto &fst = cell.get<0>();
-    if (!fst)
-      throw std::runtime_error(
-          "Incorrect parsing, empty beginning of the cell");
-    auto &fstObj = *fst;
-    if (fstObj.is<Number>()) {
-      throw std::runtime_error("Incorrect form, cannot funcall a number");
-    } else if (auto symbol = fstObj.get_if<Symbol>()) {
-      auto name = symbol->getName();
-      auto &body = cell.get<1>(); // can be nullptr
-      if (body && !body->is<Cell>()) {
-        throw std::runtime_error("Imporper syntax");
-      }
-      if (auto search = builder.builders_.find(name);
-          search != builder.builders_.end()) {
-        return search->second(builder, name, body.get());
-      } else {
-        auto callee = codeWalk(builder, fstObj);
-        auto args = lispListToVec(builder, body.get());
-        auto res = std::make_unique<Call<NotExpanded>>(std::move(callee),
-                                                       std::move(args));
-        return ExprPtr<NotExpanded>(std::move(res));
-      }
-    } else {
-      auto &body = cell.get<1>(); // can be nullptr
-      if (body && !body->is<Cell>()) {
-        throw std::runtime_error("Imporper syntax");
-      }
-      auto callee = codeWalk(builder, fstObj);
-      auto args = lispListToVec(builder, body.get());
-      return ExprPtr<NotExpanded>(std::make_unique<Call<NotExpanded>>(
-          std::move(callee), std::move(args)));
+
+  Cell &cell = syntax.get<Cell>();
+  auto &fst = cell.get<0>();
+  if (!fst)
+    throw std::runtime_error("Incorrect parsing, empty beginning of the cell");
+  auto &fstObj = *fst;
+  if (fstObj.is<Number>())
+    throw std::runtime_error("Incorrect form, cannot funcall a number");
+
+  if (auto symbol = fstObj.get_if<Symbol>()) {
+    auto name = symbol->getName();
+    auto &body = cell.get<1>(); // can be nullptr
+    auto bodyCell = body->get_if<Cell>();
+    if (body && !bodyCell)
+      throw std::runtime_error("Imporper syntax");
+
+    if (auto search = builder.builders_.find(name);
+        search != builder.builders_.end()) {
+      return search->second(builder, name, body.get());
     }
+    auto callee = codeWalk(builder, fstObj);
+    auto args = lispListToVec(builder, body.get());
+    auto res =
+        std::make_unique<Call<NotExpanded>>(std::move(callee), std::move(args));
+    return ExprPtr<NotExpanded>(std::move(res));
   }
+
+  auto &body = cell.get<1>(); // can be nullptr
+  if (body && !body->is<Cell>())
+    throw std::runtime_error("Imporper syntax");
+
+  auto callee = codeWalk(builder, fstObj);
+  auto args = lispListToVec(builder, body.get());
+  return ExprPtr<NotExpanded>(
+      std::make_unique<Call<NotExpanded>>(std::move(callee), std::move(args)));
 }
 
 IR1Expr ir1LispTransform(std::unique_ptr<SyntaxObject> syntax) {

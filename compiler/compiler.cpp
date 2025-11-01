@@ -11,22 +11,24 @@ Cell::Cell(std::unique_ptr<SyntaxObject> head,
     : head_(std::move(head)), tail_(std::move(tail)) {}
 
 SyntaxObject::SyntaxObject(int64_t num) : obj_(Number(num)) {}
+
 SyntaxObject::SyntaxObject(const std::string &&sym)
     : obj_(Symbol(std::move(sym))) {}
+
 SyntaxObject::SyntaxObject(Cell &&cell) : obj_(std::move(cell)) {}
 
-Cell::ListIterator::ListIterator(SyntaxObject *node) : node_(node) {}
+Cell::ListIterator::ListIterator(SyntaxObject *node)
+    : node_(node->get_if<Cell>()) {}
 
 Cell::ListIterator::reference Cell::ListIterator::operator*() const {
-  auto &ret = node_->get<Cell>();
-  return *ret.head_;
+  return *node_->head_;
 }
 
 Cell::ListIterator::pointer Cell::ListIterator::operator->() const {
-  return std::addressof(*node_);
+  return node_->head_.get();
 }
 
-Cell::ListIterator::pointer Cell::ListIterator::getCell() { return node_; }
+Cell *Cell::ListIterator::getCell() { return node_; }
 
 bool Cell::ListIterator::operator==(ListIterator const &o) const {
   return node_ == o.node_;
@@ -39,12 +41,7 @@ bool Cell::ListIterator::operator!=(ListIterator const &o) const {
 Cell::ListIterator &Cell::ListIterator::operator++() {
   if (!node_)
     throw std::runtime_error("increment past end");
-  auto c = node_->get_if<Cell>();
-  if (!c)
-    throw std::runtime_error("not a proper list");
-  node_ = c->get<1>().get(); /* Follow cdr pointer */
-  if (node_ && !node_->is<Cell>())
-    throw std::runtime_error("not a proper list");
+  node_ = node_->get<1>().get()->get_if<Cell>(); /* Follow cdr pointer */
   return *this;
 }
 
@@ -276,8 +273,9 @@ template <Phase P>
 TaggedLLVMVal Goto<P>::codegen(CodegenContext &codegenContext)
   requires(std::is_same_v<P, Expanded>)
 {
-  auto currentFn = codegenContext.context.builder.GetInsertBlock()->getParent();
   auto &[context, builder, module] = codegenContext.context;
+
+  auto currentFn = builder.GetInsertBlock()->getParent();
 
   // Check if this is a simple sequential body with no tags
   auto nonTrivialTags = std::any_of(body_.begin(), body_.end(), [](auto &item) {

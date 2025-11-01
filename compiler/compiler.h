@@ -167,7 +167,7 @@ public:
      *
      * @return pointer - Pointer to current node
      */
-    pointer getCell();
+    Cell *getCell();
 
     /*
      * Equality comparison
@@ -203,7 +203,7 @@ public:
     ListIterator operator++(int);
 
   private:
-    SyntaxObject *node_; /* Current position in the list */
+    Cell *node_; /* Current position in the list */
   };
 
   /*
@@ -265,6 +265,11 @@ public:
 
   template <typename T> bool is() const {
     return std::holds_alternative<T>(obj_);
+  }
+
+  bool isNil() const {
+    auto sym = std::get_if<Symbol>(&obj_);
+    return sym != nullptr && sym->getName() == "nil";
   }
   /*
   bool operator==(const SyntaxObject &other) const {

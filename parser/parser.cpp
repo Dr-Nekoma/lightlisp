@@ -16,23 +16,21 @@ std::unique_ptr<SyntaxObject> Parser::ReadProper() {
   if (it_ == tokenizer_.end())
     throw std::runtime_error("Unexpected end of expression");
 
-  if (auto symbol = it_->get_if<SymbolToken>()) {
+  if (auto symbol = it_->get_if<SymbolToken>())
     return std::make_unique<SyntaxObject>(std::move(symbol->name));
-  } else if (auto num_tok = it_->get_if<NumberToken>()) {
+
+  if (auto num_tok = it_->get_if<NumberToken>()) {
     return std::make_unique<SyntaxObject>(num_tok->value);
-  } else {
-    auto syntax = it_->get_if<SyntaxToken>();
-    if (*syntax == SyntaxToken::Dot) {
-      throw std::runtime_error("Unexpected symbol");
-    } else {
-      if (*syntax == SyntaxToken::ParenClose)
-        ParenClose();
-      else
-        ParenOpen();
-      return ReadList();
-    }
   }
-  throw std::runtime_error("Unexpected symbol");
+  auto syntax = it_->get_if<SyntaxToken>();
+  if (*syntax == SyntaxToken::Dot)
+    throw std::runtime_error("Unexpected symbol");
+
+  if (*syntax == SyntaxToken::ParenClose)
+    ParenClose();
+  else
+    ParenOpen();
+  return ReadList();
 }
 
 std::unique_ptr<SyntaxObject> Parser::ReadList() {
@@ -46,9 +44,13 @@ std::unique_ptr<SyntaxObject> Parser::ReadList() {
     if (auto syntax = it_->get_if<SyntaxToken>(); syntax != nullptr) {
       if (*syntax == SyntaxToken::ParenClose) {
         ParenClose();
-        ++it_;
-        return head;
-      } else if (*syntax == SyntaxToken::Dot) {
+        if (head != nullptr) {
+          ++it_;
+          return head;
+        }
+        return std::make_unique<SyntaxObject>("nil");
+      }
+      if (*syntax == SyntaxToken::Dot) {
         ++it_;
         if (tail == nullptr)
           throw std::runtime_error("Improper list syntax");
