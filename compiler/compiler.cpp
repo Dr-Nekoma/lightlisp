@@ -4,10 +4,21 @@
 #include "util.h"
 
 // Cell::ListIterator implementations
+Cell::Cell() : head_(nullptr), tail_(nullptr) {}
+
+Cell::Cell(std::unique_ptr<SyntaxObject> head,
+           std::unique_ptr<SyntaxObject> tail)
+    : head_(std::move(head)), tail_(std::move(tail)) {}
+
+SyntaxObject::SyntaxObject(int64_t num) : obj_(Number(num)) {}
+SyntaxObject::SyntaxObject(const std::string &&sym)
+    : obj_(Symbol(std::move(sym))) {}
+SyntaxObject::SyntaxObject(Cell &&cell) : obj_(std::move(cell)) {}
+
 Cell::ListIterator::ListIterator(SyntaxObject *node) : node_(node) {}
 
 Cell::ListIterator::reference Cell::ListIterator::operator*() const {
-  auto &ret = std::get<Cell>(*node_);
+  auto &ret = node_->get<Cell>();
   return *ret.head_;
 }
 
@@ -28,11 +39,11 @@ bool Cell::ListIterator::operator!=(ListIterator const &o) const {
 Cell::ListIterator &Cell::ListIterator::operator++() {
   if (!node_)
     throw std::runtime_error("increment past end");
-  auto c = std::get_if<Cell>(node_);
+  auto c = node_->get_if<Cell>();
   if (!c)
     throw std::runtime_error("not a proper list");
   node_ = c->get<1>().get(); /* Follow cdr pointer */
-  if (node_ && !std::holds_alternative<Cell>(*node_))
+  if (node_ && !node_->is<Cell>())
     throw std::runtime_error("not a proper list");
   return *this;
 }

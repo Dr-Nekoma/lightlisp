@@ -39,10 +39,10 @@ class Token {
   std::variant<SymbolToken, NumberToken, StringToken, SyntaxToken> tok_;
 
 public:
-  Token(SymbolToken tok) : tok_(tok) {}
-  Token(NumberToken tok) : tok_(tok) {}
-  Token(StringToken tok) : tok_(tok) {}
-  Token(SyntaxToken tok) : tok_(tok) {}
+  Token(SymbolToken &&tok) : tok_(tok) {}
+  Token(NumberToken &&tok) : tok_(tok) {}
+  Token(StringToken &&tok) : tok_(tok) {}
+  Token(SyntaxToken &&tok) : tok_(tok) {}
 
   Token(char ch) : tok_(SyntaxToken::ParenOpen) {
     switch (ch) {
@@ -75,10 +75,6 @@ public:
     } else {
       tok_ = SymbolToken(symbols);
     }
-  }
-
-  std::variant<SymbolToken, NumberToken, StringToken, SyntaxToken> &get() {
-    return tok_;
   }
 
   bool operator==(const Token &other) const { return tok_ == other.tok_; }

@@ -23,7 +23,7 @@ class Cell;
  * allowing the parser to return different node types without
  * using inheritance and virtual functions.
  */
-using SyntaxObject = std::variant<Number, Symbol, Cell>;
+class SyntaxObject;
 
 struct NotExpanded {};
 struct Expanded {};

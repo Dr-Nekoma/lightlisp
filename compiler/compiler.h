@@ -11,6 +11,7 @@
  * Represents literal integer values in the Lisp source code.
  * Stores the numeric value and generates LLVM IR for boxed integers.
  */
+
 class Number {
 public:
   /*
@@ -107,7 +108,7 @@ public:
   /*
    * Default constructor creates an empty cell
    */
-  Cell() : head_(nullptr), tail_(nullptr) {}
+  Cell();
 
   /*
    * Construct a cell with head and tail elements
@@ -115,8 +116,7 @@ public:
    * @param head - First element of the pair (car)
    * @param tail - Second element of the pair (cdr)
    */
-  Cell(std::unique_ptr<SyntaxObject> head, std::unique_ptr<SyntaxObject> tail)
-      : head_(std::move(head)), tail_(std::move(tail)) {}
+  Cell(std::unique_ptr<SyntaxObject> head, std::unique_ptr<SyntaxObject> tail);
 
   /*
    * Template accessor for cell elements
@@ -249,6 +249,29 @@ public:
 private:
   std::unique_ptr<SyntaxObject> head_; /* First element (car) */
   std::unique_ptr<SyntaxObject> tail_; /* Second element (cdr) */
+};
+
+class SyntaxObject {
+  std::variant<Number, Symbol, Cell> obj_;
+
+public:
+  SyntaxObject(int64_t num);
+  SyntaxObject(const std::string &&sym);
+  SyntaxObject(Cell &&cell);
+
+  template <typename T> T *get_if() { return std::get_if<T>(&obj_); }
+
+  template <typename T> T &get() { return std::get<T>(obj_); }
+
+  template <typename T> bool is() const {
+    return std::holds_alternative<T>(obj_);
+  }
+  /*
+  bool operator==(const SyntaxObject &other) const {
+    return obj_ == other.obj_;
+  }
+  bool operator!=(const SyntaxObject &other) const { return !(*this == other); }
+  */
 };
 
 template <Phase P> class Lambda {

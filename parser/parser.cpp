@@ -17,9 +17,9 @@ std::unique_ptr<SyntaxObject> Parser::ReadProper() {
     throw std::runtime_error("Unexpected end of expression");
 
   if (auto symbol = it_->get_if<SymbolToken>()) {
-    return std::make_unique<SyntaxObject>(Symbol(symbol->name));
+    return std::make_unique<SyntaxObject>(std::move(symbol->name));
   } else if (auto num_tok = it_->get_if<NumberToken>()) {
-    return std::make_unique<SyntaxObject>(Number(num_tok->value));
+    return std::make_unique<SyntaxObject>(num_tok->value);
   } else {
     auto syntax = it_->get_if<SyntaxToken>();
     if (*syntax == SyntaxToken::Dot) {
@@ -64,13 +64,12 @@ std::unique_ptr<SyntaxObject> Parser::ReadList() {
       }
     }
     auto current_object = ReadProper();
-    if (current_object &&
-        !std::holds_alternative<Cell>(*current_object)) // hacky
+    if (current_object && !current_object->is<Cell>()) // hacky
       ++it_;
     Cell new_cell;
     new_cell.get<0>() = std::move(current_object);
     auto new_node = std::make_unique<SyntaxObject>(std::move(new_cell));
-    Cell *new_cell_ptr = &std::get<Cell>(*new_node);
+    auto new_cell_ptr = new_node->get_if<Cell>();
     if (head == nullptr)
       head = std::move(new_node);
     else

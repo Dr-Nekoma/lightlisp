@@ -23,7 +23,7 @@ ObjectBuilder::ObjectBuilder() {
                          SyntaxObject *syntax) -> IR1Expr {
     auto view = Cell::ListView(syntax);
     auto it = view.begin();
-    if (auto sym = std::get_if<Symbol>(&*it)) {
+    if (auto sym = it->get_if<Symbol>()) {
       it++;
       auto snd = codeWalk(builder, *it);
       auto res =
@@ -41,7 +41,7 @@ ObjectBuilder::ObjectBuilder() {
     auto view = Cell::ListView(syntax);
     std::vector<std::variant<IR1Expr, std::string>> body;
     for (auto &val : view) {
-      if (auto sym = std::get_if<Symbol>(&val))
+      if (auto sym = val.get_if<Symbol>())
         body.emplace_back(sym->getName());
       else
         body.emplace_back(codeWalk(builder, val));
@@ -56,13 +56,11 @@ ObjectBuilder::ObjectBuilder() {
                        SyntaxObject *syntax) -> IR1Expr {
     auto view = Cell::ListView(syntax);
     auto it = view.begin();
-    if (auto sym = std::get_if<Symbol>(&*it)) {
-      auto name = sym->getName();
+    if (auto sym = it->get_if<Symbol>()) {
       return ExprPtr<NotExpanded>(
-          std::make_unique<Go<NotExpanded>>(std::move(name)));
-    } else {
-      throw std::runtime_error("Non symbol cannot be a tag");
+          std::make_unique<Go<NotExpanded>>(std::move(sym->getName())));
     }
+    throw std::runtime_error("Non symbol cannot be a tag");
   };
 
   builders_["go"] = go_builder;
@@ -71,7 +69,7 @@ ObjectBuilder::ObjectBuilder() {
                          SyntaxObject *syntax) -> IR1Expr {
     auto view = Cell::ListView(syntax);
     auto it = view.begin();
-    if (auto sym = std::get_if<Symbol>(&*it)) {
+    if (auto sym = it->get_if<Symbol>()) {
       it++;
       auto init = codeWalk(builder, *it);
       if (name == "def")
@@ -81,9 +79,8 @@ ObjectBuilder::ObjectBuilder() {
       auto body = codeWalk(builder, *it);
       return ExprPtr<NotExpanded>(std::make_unique<Let<NotExpanded>>(
           std::move(*sym), std::move(init), std::move(body)));
-    } else {
-      throw std::runtime_error("Non symbol cannot be a variable name");
     }
+    throw std::runtime_error("Non symbol cannot be a variable name");
   };
 
   builders_["let"] = decl_builder;
@@ -94,16 +91,14 @@ ObjectBuilder::ObjectBuilder() {
                            SyntaxObject *syntax) -> IR1Expr {
     auto view = Cell::ListView(syntax);
     auto it = view.begin();
-    auto maybeCell = it.getCell();
-    if (auto cell = std::get_if<Cell>(maybeCell)) {
+    if (auto cell = it->get_if<Cell>()) {
       auto argVec = parseArgList(cell->get<0>().get());
       it++;
       auto body = codeWalk(builder, *it);
       return ExprPtr<NotExpanded>(std::make_unique<Lambda<NotExpanded>>(
           std::move(argVec), std::move(body)));
-    } else {
-      throw std::runtime_error("Arg list is not a list");
     }
+    throw std::runtime_error("Arg list is not a list");
   };
 
   builders_["lambda"] = lambda_builder;
@@ -116,7 +111,7 @@ std::vector<Symbol> parseArgList(SyntaxObject *syntax) {
 
   auto view = Cell::ListView(syntax);
   for (auto &node : view) {
-    if (auto sym = std::get_if<Symbol>(&node)) {
+    if (auto sym = node.get_if<Symbol>()) {
       res.emplace_back(*sym);
     } else {
       throw std::runtime_error("Not a valid arg name");
@@ -138,23 +133,23 @@ std::vector<IR1Expr> lispListToVec(ObjectBuilder &builder,
 }
 
 IR1Expr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax) {
-  if (auto number = std::get_if<Number>(&syntax)) {
+  if (auto number = syntax.get_if<Number>()) {
     return std::make_unique<Number>(std::move(*number));
-  } else if (auto symbol = std::get_if<Symbol>(&syntax)) {
+  } else if (auto symbol = syntax.get_if<Symbol>()) {
     return std::make_unique<Symbol>(std::move(*symbol));
   } else {
-    Cell cell = std::get<Cell>(std::move(syntax));
+    Cell &cell = syntax.get<Cell>();
     auto &fst = cell.get<0>();
     if (!fst)
       throw std::runtime_error(
           "Incorrect parsing, empty beginning of the cell");
     auto &fstObj = *fst;
-    if (std::holds_alternative<Number>(fstObj)) {
+    if (fstObj.is<Number>()) {
       throw std::runtime_error("Incorrect form, cannot funcall a number");
-    } else if (auto symbol = std::get_if<Symbol>(&fstObj)) {
+    } else if (auto symbol = fstObj.get_if<Symbol>()) {
       auto name = symbol->getName();
       auto &body = cell.get<1>(); // can be nullptr
-      if (body && !std::holds_alternative<Cell>(*body)) {
+      if (body && !body->is<Cell>()) {
         throw std::runtime_error("Imporper syntax");
       }
       if (auto search = builder.builders_.find(name);
@@ -169,7 +164,7 @@ IR1Expr codeWalk(ObjectBuilder &builder, SyntaxObject &syntax) {
       }
     } else {
       auto &body = cell.get<1>(); // can be nullptr
-      if (body && !std::holds_alternative<Cell>(*body)) {
+      if (body && !body->is<Cell>()) {
         throw std::runtime_error("Imporper syntax");
       }
       auto callee = codeWalk(builder, fstObj);
