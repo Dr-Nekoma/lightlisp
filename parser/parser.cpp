@@ -16,62 +16,69 @@ std::unique_ptr<SyntaxObject> Parser::ReadProper() {
   if (it_ == tokenizer_.end())
     throw std::runtime_error("Unexpected end of expression");
 
-  if (auto symbol = it_->get_if<SymbolToken>())
-    return std::make_unique<SyntaxObject>(std::move(symbol->name));
+  if (auto symbol = it_->get_if<SymbolToken>()) {
+    auto result = std::make_unique<SyntaxObject>(std::move(symbol->name));
+    ++it_;
+    return result;
+  }
 
   if (auto num_tok = it_->get_if<NumberToken>()) {
-    return std::make_unique<SyntaxObject>(num_tok->value);
+    auto result = std::make_unique<SyntaxObject>(num_tok->value);
+    ++it_;
+    return result;
   }
+
   auto syntax = it_->get_if<SyntaxToken>();
+  if (!syntax)
+    throw std::runtime_error("Unexpected token");
+
   if (*syntax == SyntaxToken::Dot)
-    throw std::runtime_error("Unexpected symbol");
+    throw std::runtime_error("Unexpected dot");
 
   if (*syntax == SyntaxToken::ParenClose)
-    ParenClose();
-  else
-    ParenOpen();
+    throw std::runtime_error("Unexpected closing parenthesis");
+
+  ParenOpen();
+  ++it_;
   return ReadList();
 }
 
 std::unique_ptr<SyntaxObject> Parser::ReadList() {
-  ++it_;
-  if (it_ == tokenizer_.end())
-    throw std::runtime_error("Input not complete");
-
-  std::unique_ptr<SyntaxObject> head;
+  std::unique_ptr<SyntaxObject> head = nullptr;
   Cell *tail = nullptr;
+
   while (true) {
-    if (auto syntax = it_->get_if<SyntaxToken>(); syntax != nullptr) {
+    if (it_ == tokenizer_.end())
+      throw std::runtime_error("Unclosed list");
+
+    if (auto syntax = it_->get_if<SyntaxToken>()) {
       if (*syntax == SyntaxToken::ParenClose) {
         ParenClose();
-        if (head != nullptr) {
-          ++it_;
-          return head;
-        }
-        return std::make_unique<SyntaxObject>("nil");
+        ++it_;
+        return head ? std::move(head) : std::make_unique<SyntaxObject>("nil");
       }
+
       if (*syntax == SyntaxToken::Dot) {
-        ++it_;
         if (tail == nullptr)
-          throw std::runtime_error("Improper list syntax");
-
-        auto second = ReadProper();
-        tail->get<1>() = std::move(second);
+          throw std::runtime_error("Dot in improper position");
         ++it_;
-        if (auto syntax = it_->get_if<SyntaxToken>();
-            !(syntax && *syntax == SyntaxToken::ParenClose))
-          throw std::runtime_error("Improper list syntax");
 
+        tail->get<1>() = ReadProper();
+
+        if (it_ == tokenizer_.end() || !it_->get_if<SyntaxToken>() ||
+            *it_->get_if<SyntaxToken>() != SyntaxToken::ParenClose)
+          throw std::runtime_error("Expected ) after dot expression");
         continue;
       }
     }
-    auto current_object = ReadProper();
-    if (current_object && !current_object->is<Cell>()) // hacky
-      ++it_;
+
+    auto element = ReadProper();
+
     Cell new_cell;
-    new_cell.get<0>() = std::move(current_object);
+    new_cell.get<0>() = std::move(element);
     auto new_node = std::make_unique<SyntaxObject>(std::move(new_cell));
     auto new_cell_ptr = new_node->get_if<Cell>();
+
     if (head == nullptr)
       head = std::move(new_node);
     else
